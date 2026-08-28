@@ -1,0 +1,2 @@
+# Matches the artifact build/runtime and requires Python >=3.11.
+numpy==2.3.5

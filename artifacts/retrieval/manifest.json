@@ -1,0 +1,77 @@
+{
+  "artifact_version": 1,
+  "algorithm": "catalog_random_indexing_v1",
+  "text_schema_version": "techjam_product_text_v2",
+  "catalog_sha256": "DA979B05A68AF864CB0DCF9EE6A81C010C7E66A57978AD286C7A2E005FC69A67",
+  "product_count": 50000,
+  "embedding_dimension": 96,
+  "vocabulary_size": 30000,
+  "minimum_document_frequency": 2,
+  "maximum_document_fraction": 0.8,
+  "maximum_document_terms": 160,
+  "random_sparsity": 4,
+  "identity_weight": 0.35,
+  "seed": 2026,
+  "dtype": "float32",
+  "normalized": true,
+  "numpy_version": "2.3.5",
+  "built_at_utc": "2026-08-28T16:49:14.168851+00:00",
+  "dense_build_seconds": 95.407029,
+  "files": {
+    "dense_embeddings.npy": {
+      "sha256": "8756996079C53D027D304042DBC570578752450ACA77C4EC180BF1E1B88494D9",
+      "size_bytes": 19200128
+    },
+    "dense_encoder.npz": {
+      "sha256": "E54F70E0A6811BDD28AACA8C111F7678DF8F3634877AB82ACCCBD17477054C2B",
+      "size_bytes": 10893991
+    },
+    "product_ids.json": {
+      "sha256": "B155FD18119A0C0007C0258A4CE560092FFD7748AEC6FDE607555F4415823D81",
+      "size_bytes": 650001
+    },
+    "vocabulary.json": {
+      "sha256": "BC39ED2209FF843D8383729A1129F7E4EF440CDA9D4069557952509C51C8246E",
+      "size_bytes": 405404
+    },
+    "facet_index.npz": {
+      "sha256": "9A33EC97ED3727D952B4EEE6C8160AE419A5F7C5F19B5D4AC475023492C313AC",
+      "size_bytes": 788252
+    },
+    "facet_tokens.json": {
+      "sha256": "F579FAB37B3EEB1AA2C957333AF36B928B7F1398D94BE875BED56C01B2FB1118",
+      "size_bytes": 408172
+    }
+  },
+  "facets": {
+    "schema_version": "techjam_safe_facets_v1",
+    "maximum_document_fraction": 0.5,
+    "field_weights": {
+      "category": 3.0,
+      "store": 2.0,
+      "department": 2.5,
+      "detail": 1.5
+    },
+    "coverage": {
+      "category": {
+        "count": 50000,
+        "fraction": 1.0
+      },
+      "store": {
+        "count": 49671,
+        "fraction": 0.99342
+      },
+      "department": {
+        "count": 43575,
+        "fraction": 0.8715
+      },
+      "detail": {
+        "count": 3039,
+        "fraction": 0.06078
+      }
+    },
+    "term_count": 34176,
+    "posting_count": 386410,
+    "build_seconds": 5.117446
+  }
+}

@@ -34,11 +34,17 @@ Verify the downloaded file using the published `SHA256SUMS` file.
 
 ## Run the Starter
 
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+Phase 2 requires Python 3.11 or later because the reproducibility-pinned NumPy 2.3.5 package declares that minimum. Install the dependency and build the reusable retrieval artifacts once:
 
 ```bash
-python3 -m evaluator.local_evaluator
+python -m pip install -r requirements.txt
+python -m scripts.build_retrieval_index
+python -m evaluator.local_evaluator
 ```
+
+The artifact build includes the catalog-trained dense representation and the facet index, with no model download or runtime network access. Current candidate generation is the frozen P2-E005 lexical + facet setup (`1.0/0.55`, RRF `k=60`) with dense disabled, followed by the selected P3-E002 deterministic feature reranker over fresh Top-200 candidates. P4-E002 then analyzes catalog-backed coverage/information gain over the reranked Top-100 and asks one short deterministic question only when its turn-adjusted utility passes the configured threshold; the current Top 10 are always returned alongside it. Persistence is available experimentally but inactive. Missing optional artifacts or ranking components degrade safely to fresh lexical ordering.
+
+The selected Phase 4 runtime scores HR@10 `0.325000`, MRR `0.175629`, MTTC `8.025000`, and recommended TechnicalScore `0.274689` on the public evaluator. Set `TECHJAM_PHASE4_MODE=off` to reproduce the frozen P3-E002 ranking-only control or `analyze` to emit diagnostics without changing user-visible behavior.
 
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
 The command writes per-session results and aggregate metrics to `results.json`.
