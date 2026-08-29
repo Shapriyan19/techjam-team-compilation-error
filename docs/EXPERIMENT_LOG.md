@@ -27,6 +27,10 @@ This document answers: **What changes improved or worsened the score?**
 | P3-E002 | Deterministic feature reranker over fresh P2-E005 Top-200 candidates; persistence off | 0.215000 | 0.115323 | 8.955000 | 0.204500 | 0.182997 | 0.337500 / 0.223140 / 7.637500 | 0.100000 / 0.017946 / 10.012500 | 0.200000 / 0.117593 / 9.633333 | 0.200000 / 0.025000 / 9.000000 | Keep/default |
 | P4-E001 | Catalog-backed coverage/EIG analysis over reranked Top-100; no user-visible policy | 0.215000 | 0.115323 | 8.955000 | 0.204500 | 0.182997 | 0.337500 / 0.223140 / 7.637500 | 0.100000 / 0.017946 / 10.012500 | 0.200000 / 0.117593 / 9.633333 | 0.200000 / 0.025000 / 9.000000 | Keep as diagnostic control |
 | P4-E002 | Conservative coverage/EIG clarification policy; Top 10 always retained | 0.325000 | 0.175629 | 8.025000 | 0.297500 | 0.274689 | 0.362500 / 0.248140 / 7.412500 | 0.325000 / 0.142669 / 8.100000 | 0.233333 / 0.112037 / 9.400000 | 0.300000 / 0.050000 / 8.200000 | Keep/default |
+| P5-E001 | Shared immutable feature retention, batched clarification values, tracing, and recommendations-only clarification fallback | 0.325000 | 0.175629 | 8.025000 | 0.297500 | 0.274689 | 0.362500 / 0.248140 / 7.412500 | 0.325000 / 0.142669 / 8.100000 | 0.233333 / 0.112037 / 9.400000 | 0.300000 / 0.050000 / 8.200000 | Keep/default |
+| P5-E002 | Protect ranks 1–9; optional rank-10 hedge from ranks 11–30 | 0.325000 | 0.175629 | 8.025000 | 0.297500 | 0.274689 | 0.362500 / 0.248140 / 7.412500 | 0.325000 / 0.142669 / 8.100000 | 0.233333 / 0.112037 / 9.400000 | 0.300000 / 0.050000 / 8.200000 | Rollback; no measurable gain |
+| P6-E001 | Exact-expression BM25 cache and compiled deterministic reranking state | 0.325000 | 0.175629 | 8.025000 | 0.297500 | 0.274689 | 0.362500 / 0.248140 / 7.412500 | 0.325000 / 0.142669 / 8.100000 | 0.233333 / 0.112037 / 9.400000 | 0.300000 / 0.050000 / 8.200000 | Keep/default |
+| P6-E002 | Offline Top-30 catalog-encoder semantic rerank; Top 3 protected; deterministic/semantic rank fusion | 0.300000 | 0.171950 | 8.240000 | 0.276000 | 0.256785 | 0.350000 / 0.246250 / 7.525000 | 0.300000 / 0.139633 / 8.312500 | 0.200000 / 0.106481 / 9.633333 | 0.200000 / 0.032500 / 9.200000 | Rollback |
 
 ## P0-E000 — untouched starter baseline
 
@@ -369,12 +373,95 @@ Clarification parser correction: for brand/color/material/style answers, the par
 
 Decision: **Keep as the Phase 4 default.** It materially improves every overall metric, adds 22 hits without losing any P3 hit, and produces the strongest gain in the intended weak Browsing scenario. Dense retrieval and persistent evidence remain disabled.
 
-Final verification: `77 passed, 0 failed`. Phase 5 was not started.
+Final verification: `77 passed, 0 failed` at the Phase 4 freeze point.
 
-## Template for the next evaluated change
+## P5-E001 — clarification performance and reliability
 
-| ID | Description | HR@10 | MRR | MTTC | Efficiency | TechnicalScore | Buying | Browsing | Intent Override | Boundary | Decision |
-|---|---|---:|---:|---:|---:|---:|---|---|---|---|---|
-| P5-E001 | One Phase 5 allocation/tracing/fallback hypothesis | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Keep / Rollback |
+- Date: 2026-08-29.
+- Frozen control: P4-E002, including retrieval, reranking, state, questions, thresholds, and wording.
+- Optimization: the existing shared `CatalogFeatureStore` retains every immutable decoded record once encountered instead of evicting at 5,000; clarification candidate values are transposed in one deterministic pass. Extraction rules and floating-point equations are unchanged.
+- Reliability: clarification exceptions, missing analyzers, and corrupt optional clarification data fall back to the current ranked recommendations with no question. The official schema is unchanged.
+- Tracing: optional bounded structured records include session, turn, component, elapsed milliseconds, success/failure, fallback use, and error type. Tracing is disabled by default.
+- Behavioral equivalence: official result byte-identical to P4-E002, SHA-256 `F811F9B1440CA86A31B449CC2D770E4A15C5DE8BC01E685835FF98D936392B36`. Question count, turns, attributes, scenarios, and recommendation order are unchanged. Session deltas are all zero.
+- Latency baseline: startup `11.971796 s`; evaluator wall `322.645913 s`; average/p50/p95/max respond latency `219.291169 / 67.455350 / 897.014000 / 2229.986600 ms`.
+- Untraced optimized measurement: startup `18.105817 s`; evaluator wall `290.789095 s`; average/p50/p95/max `197.563240 / 79.992600 / 928.122600 / 2410.615900 ms`.
+- Improvement: evaluator wall `9.87%`; average respond latency `9.91%`. Startup and tail latency varied negatively on that run, so component traces—not a single noisy wall-clock run—are retained for diagnosis.
+- Matched traced run: clarification averaged `6.466543 ms` (p95 `11.199 ms`); candidate preparation `1.150040 ms`; entropy/EIG `2.185020 ms`; coverage `0.597498 ms`; selection `0.081395 ms`. Reranking and lexical retrieval, not clarification, dominate remaining latency.
 
-For each new entry also record files changed, commands, tests, reported token use, important failure cases, regressions, and the reason for the decision.
+Decision: **Keep.** Behavior is exactly preserved, normal tracing is off, and optional clarification cannot suppress valid recommendations.
+
+Exact commands:
+
+```powershell
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p5_e001.json --timing-output artifacts/evaluation/p5_e001_timing.json
+$env:TECHJAM_TRACE_ENABLED='1'
+$env:TECHJAM_TRACE_LIMIT='30000'
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p5_e001_final.json --timing-output artifacts/evaluation/p5_e001_final_timing.json --diagnostic-output artifacts/evaluation/p5_e001_diagnostics.json
+```
+
+## P5-E002 — conservative rank-10 hedge
+
+- Control: kept P5-E001 with `TECHJAM_TOPK_MODE=rank_only`.
+- Experiment: preserve ranks 1–9; rank 10 may be replaced only by a valid unique rank 11–30 candidate within `0.03` score, with no rejection/conflict, no weaker route support, and a different value on one unknown/soft dominant brand/style/material/color axis.
+- Activation: 30 of 1,470 turns (`2.04%`), always position 10. Scenario distribution: Boundary 10, Browsing 11, Intent Override 9, Buying 0.
+- Question differences versus P5-E001: 0. Recommendation-turn differences: 30.
+- Session deltas: 0 new hits, 0 lost hits, 0 better/worse target ranks, and 0 earlier/later hits.
+- Official metrics and artifact hash are byte-identical to P5-E001/P4-E002.
+
+Decision: **Rollback to `rank_only`.** The hedge changed outputs but produced no measurable benefit, so the simpler ranking is the default. The isolated implementation remains available for reproducible analysis.
+
+Exact command:
+
+```powershell
+$env:TECHJAM_TOPK_MODE='hedge'
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p5_e002.json --timing-output artifacts/evaluation/p5_e002_timing.json --diagnostic-output artifacts/evaluation/p5_e002_diagnostics.json
+```
+
+Final Phase 5 verification: `89 passed, 0 failed` at the Phase 5 freeze point.
+
+## P6-E001 — deterministic performance optimization
+
+- Date: 2026-08-29.
+- Matched traced P5-E001 baseline: startup `17.465128 s`, evaluator wall `303.930114 s`, average/p50/p95 respond `206.347516 / 83.882600 / 982.561300 ms`.
+- Bottlenecks: reranker `144.459340 ms` average and lexical FTS5 `45.700751 ms`; clarification was only `6.466543 ms`.
+- Reranker optimization: compile active slot tokens, strengths, negatives, budgets, and rejected IDs once per turn; reuse the immutable weight list. Formulas, feature ordering, weights, candidate sort keys, and product extraction remain unchanged.
+- FTS5 optimization: bounded LRU cache keyed by the exact prepared OR expression and Top-N. The catalog and FTS table remain immutable, so cache reuse is semantically exact. FTS5 weights, tokens, Top-N, OR behavior, and query rewriting are unchanged.
+- Startup investigation: no eager feature population occurs; the measured startup variance comes primarily from rebuilding the 50k in-memory FTS5 table and loading artifacts. A packaged FTS database was rejected because it would duplicate a roughly 60 MB source into a much larger submission asset for a one-process startup benefit.
+- Strict equivalence: P6-E001 result SHA-256 `F811F9B1440CA86A31B449CC2D770E4A15C5DE8BC01E685835FF98D936392B36`; 0 recommendation/question/turn-output differences versus P5-E001.
+- Matched P6-E001: startup `17.966027 s`, wall `163.999776 s`, average/p50/p95 respond `111.229752 / 21.301750 / 547.888600 ms`.
+- Improvements: wall `46.04%`, average respond `46.10%`, p50 `74.61%`, p95 `44.24%`; reranker average `39.47%`; BM25 average `70.39%`. Startup was `2.87%` slower within observed run variance.
+- BM25 cache: 861 hits and 357 misses among executed non-empty lexical lookups.
+
+Decision: **Keep/default.** Behavior is byte-identical and runtime improves materially.
+
+## P6-E002 — optional local semantic shortlist reranker
+
+- Mode: `TECHJAM_SEMANTIC_RERANK_MODE=optional`; provider `catalog_encoder`; shortlist 30; deterministic Top 3 protected.
+- Provider choice: reuse the already-packaged, checksum-validated `catalog_random_indexing_v1` encoder only to score the supplied shortlist. It never performs 50k nearest-neighbour retrieval. No model download, network, API key, extra dependency, token usage, or monetary cost is required.
+- Input: rewritten active intent, structured slots with hard/soft strength, explicit negatives, ordered candidate IDs, title/category/brand/concise catalog facets/price. Cache key includes provider version, active intent/state, and shortlist IDs/order, so overrides cannot reuse stale results.
+- Blend: deterministic and semantic ranks use one RRF calculation for positions 4–30 with semantic weight `0.35`; Top 3 stay fixed. Hard-conflicting and rejected candidates cannot be promoted.
+- Validation/fallback: reject hallucinated/duplicate/non-shortlist IDs, append omissions deterministically, and fall back to P6-E001 for missing artifacts, unavailable provider, empty encoding, timeout, or exception.
+- Calls: 367 successful local semantic batches, 851 cache hits, 38 provider failures, and 290 total deterministic fallbacks including insufficient candidate sets. Average/p95 provider latency `0.768747 / 1.569000 ms`.
+- Tokens/cost: `0 / 0 / 0`; estimated cost `$0.00`. Evaluator wall `186.651397 s`.
+- Session delta versus P6-E001: 1 new hit, 6 lost hits, 6 better ranks, 8 worse ranks, 1 earlier hit, and 1 later hit.
+- Question isolation: 0 selected-question differences across 1,459 common turns. Total questions changed from 194 to 195 only because ranking regressions extended trajectories.
+- Artifact SHA-256: `55345605709AE2E9C778F9C7D73E1FE4AF9745B89B242BC80F30778DADE5BD33`.
+
+Decision: **Rollback.** HR@10 fell `0.025000`, TechnicalScore fell `0.017904`, every scenario lost HR, and lost hits exceeded new hits. Default semantic mode remains `off`.
+
+Final Phase 6 verification: `103 passed, 0 failed`.
+
+## Phase 7 — final submission hardening
+
+No Phase 7 experiment changes retrieval, ranking, parser behavior, or question policy.
+
+| ID | Validation | Result | Decision |
+|---|---|---|---|
+| P7-E001 | Environment/artifact/offline audit | Python >=3.11; NumPy 2.3.5; packaged catalog gzip + facet artifacts; all declared hashes valid; no evaluation-time network | Pass |
+| P7-E002 | End-to-end failure matrix | Missing/corrupt/checksum-bad facets -> lexical; clarification/allocator failures retain valid ranking; disabled dense/semantic files irrelevant; trace off needs no path | Pass |
+| P7-E003 | General parser/state corpus | Accumulation, strengths, negation, overrides, no-preference, rejection, browsing/boundary/feature text pass without target-label rules | Pass |
+| P7-E004 | Contract and output validation | Exact signatures; first/middle/turn-10/empty/reset/isolation pass; invalid/duplicate/non-catalog IDs filtered stably | Pass |
+| P7-E005 | Repeated official-metric reproduction | Three evaluator-compatible runs plus final official run preserve all metrics and SHA-256 `F811F9...392B36` | Pass/freeze |
+| P7-E006 | Constructed two-turn demonstration | Useful feature clarification, accumulated state/query, fresh retrieval/reranking, recommendations every turn | Pass |
+
+Final Phase 7 verification: `118 passed, 0 failed`. External calls/tokens/cost remain `0 / 0 / $0`. The P6-E001 algorithm is **FINAL AND FROZEN**.

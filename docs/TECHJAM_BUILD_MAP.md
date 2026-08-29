@@ -4,9 +4,9 @@ This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase
 
-**Phase 4 — complete; `P4-E002` clarification policy kept, `P4-E001` retained as the byte-identical diagnostic control. Phase 5 has not started.**
+**Phase 7 — complete. FINAL ALGORITHM FROZEN. `P6-E001` remains the exact production algorithm; Phase 7 added submission hardening only.**
 
-Phase 4 added catalog-backed coverage/EIG analysis and a deterministic question policy as two isolated experiments. P4-E001 left P3-E002 byte-identical. P4-E002 added 22 hits, lost none, and raised TechnicalScore to `0.274689`; it is the default. Phase 1 state, P2-E005 lexical/facet retrieval, P3-E002 ranking, dense weight `0`, evaluator, catalog, labels, and official signatures remain unchanged.
+P6-E001 compiles reranking state once per turn and caches exact immutable BM25 queries. It is byte-identical to P5-E001 and reduced the matched traced evaluator wall time by `46.04%`. P6-E002 tested one offline Top-30 semantic reranker, but lost six hits while adding one, so semantic mode remains off.
 
 The official evaluator, catalog, public labels, configuration, checksums, split logic, and scoring code remain unchanged.
 
@@ -49,22 +49,23 @@ The official evaluator, catalog, public labels, configuration, checksums, split 
 - Added 22 Phase 4 tests, bringing the total to 77.
 - Evaluated P4-E001 separately: result byte-identical to P3-E002; diagnostic machinery kept.
 - Evaluated P4-E002 separately: 22 new hits, 0 lost hits, TechnicalScore `+0.091692`, and Browsing HR `0.10 -> 0.325`; policy kept.
+- Added Phase 5 configuration, bounded component tracing, clarification failure isolation, and shared immutable feature retention.
+- Added a conservative Top-K allocator with exact `rank_only` control and isolated `hedge` mode.
+- Added 12 Phase 5 tests, bringing the total to 89.
+- Evaluated P5-E001: byte-identical behavior and metrics; kept.
+- Evaluated P5-E002: 30 rank-10 activations but no session-level improvement; rolled back to `rank_only`.
+- Added exact-expression BM25 caching and compiled deterministic ranking state without changing formulas or output.
+- Evaluated P6-E001: exact frozen hash, 0 turn-output differences, wall time `303.93 -> 164.00 s`; kept.
+- Added a provider-neutral optional semantic interface, strict output validation, input cache, local catalog-encoder provider, and deterministic fallback.
+- Added 14 Phase 6 tests, bringing the total to 103.
+- Evaluated P6-E002: 1 new hit, 6 lost hits, TechnicalScore `0.256785`; rolled back.
+- Added final catalog-ID output validation, a complete fallback matrix, a general parser/state corpus, contract/reset/session tests, and process RSS/startup component profiling.
+- Audited packaged artifacts and offline setup, produced the final demonstration and reproducibility report, and reproduced the frozen output repeatedly.
+- Added 15 Phase 7 tests, bringing the final total to 118.
 
-## Next task
+## Final status
 
-**Phase 5: runtime hardening, trace/fallback validation, then one isolated Top-K allocation experiment.**
-
-Recommended work, subject to approval:
-
-1. Freeze P4-E002 as the official control, including its question thresholds and unchanged P3 ranking.
-2. P5-E001: precompute or batch the compact clarification facets and add component latency/fallback traces; require byte-identical P4-E002 metrics and questions while reducing the roughly six-minute public run.
-3. Validate safe fallbacks for missing facet artifacts, feature metadata, and clarification analysis; every fallback must still return valid unique recommendations.
-4. Add a concise per-turn production trace containing route health, query, state patches, question decision, and fallback tier without target or label access.
-5. Only after runtime parity, P5-E002 may test one deterministic Top-K hedge/coverage allocator over the already reranked candidates. Keep it separate from caching/tracing and compare exact new/lost/rank/turn deltas.
-6. Preserve question + recommendations, no-preference handling, override recomputation, dense weight `0`, and persistence off.
-7. Continue excluding LLM reranking, RL, ProtoNet, and runtime multi-agent logic unless a later phase explicitly approves them.
-
-Do not implement Phase 5 until explicitly approved.
+All main phases are complete. There is no automatic Phase 8 or pending optimization task. Submission work should preserve the frozen defaults and use `docs/FINAL_REPRODUCIBILITY_REPORT.md` as the handoff checklist.
 
 ## Target architecture
 
@@ -75,7 +76,7 @@ message -> clue parser -> session state -> query rewriter -> scenario routing
         -> lexical/facet retrieval -> RRF (optional experimental dense route)
         -> fresh candidates -> deterministic reranker (optional experimental persistence)
         -> catalog-backed coverage/EIG -> deterministic question/turn policy
-        -> optional later small-shortlist LLM reranker
+        -> optional experimental small-shortlist semantic reranker (disabled)
         -> Top-K allocator -> optional question + current recommendations
 ```
 
@@ -85,14 +86,14 @@ Reusable facet, optional dense, and optional variant artifacts will be built off
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Inspect repository, reproduce baseline, create documentation | Complete |
-| 1 | Session state, slot patches, override, query rewrite | Complete |
-| 2 | BM25 + optional dense + facet retrieval + RRF | Complete; `P2-E005` lexical + facet kept |
-| 3 | Persistent evidence + deterministic reranking | Complete; reranker only kept |
-| 4 | Information gain + facet coverage + turn-aware question policy | Complete; P4-E002 kept |
-| 5 | Runtime hardening + tracing/fallbacks + isolated Top-K allocation | Next; awaiting approval |
-| 6 | Optional LLM semantic reranking on 30–50 candidates | Pending |
-| 7 | One-hypothesis-at-a-time parameter tuning | Pending |
+| 0 | Inspect repository, reproduce baseline, create documentation | ✅ Complete |
+| 1 | Session state, slot patches, override, query rewrite | ✅ Complete |
+| 2 | BM25 + optional dense + facet retrieval + RRF | ✅ Complete; `P2-E005` lexical + facet kept |
+| 3 | Persistent evidence + deterministic reranking | ✅ Complete; reranker only kept |
+| 4 | Information gain + facet coverage + turn-aware question policy | ✅ Complete; P4-E002 kept |
+| 5 | Runtime hardening + tracing/fallbacks + isolated Top-K allocation | ✅ Complete; P5-E001 kept, P5-E002 rolled back |
+| 6 | Deterministic optimization + one small-shortlist semantic experiment | ✅ Complete; P6-E001 kept, P6-E002 rolled back |
+| 7 | Submission robustness, regression corpus, and final reproducibility | ✅ Complete; algorithm unchanged |
 | Stretch | ProtoNet router or dialogue-policy RL, only after measured comparison | Deferred |
 
 ## Major architectural decisions
@@ -142,20 +143,20 @@ The measured deviation from the earlier three-route proposal is deliberate: the 
 - The facet route uses only safe actual metadata; selected detail coverage is just `6.078%` and price coverage is `21.054%`.
 - Boundary initially resembles Browsing; the policy relies on explicit no-preference state rather than hidden scenario knowledge.
 - Dense results are sensitive enough to numerical tie ordering that NumPy is pinned exactly.
-- Retrieval artifacts total `30.85 MiB` and must be included or rebuilt during setup.
+- Required facet artifacts total `1.76 MiB`; the remaining dense artifacts bring the full experiment bundle to `30.85 MiB` but are optional for the default runtime.
 - Persistence is implemented but inactive because P3-E001 lowered TechnicalScore and delayed two hits.
 - P3-E002 gains three hits but loses two Buying hits; broad/shared structured metadata can promote substitutes past a valid rank-7/rank-10 target.
 - Overall MRR falls by `0.002008` versus P2-E005; Intent Override HR improves but its MRR falls by `0.021296`.
-- The feature scorer plus Top-100 clarification analysis increases the public evaluator wall time to roughly six minutes locally; compact precomputed question facets are the first Phase 5 optimization target.
-- There is no Top-K hedge allocator or complete multi-tier production fallback system.
+- P6-E001 materially reduces reranking/BM25 time, but cold startup still rebuilds the 50k FTS5 table and remains about 18 seconds.
+- The experimental hedge allocator is available but inactive because 30 output changes produced no official gain.
 - The FTS5 index is rebuilt in memory for every Agent process and is not cached.
 - Catalog metadata is sparse: 39,473 products have no price, 23,887 have no description, and 5,219 have no features.
 - Intent Override MRR falls slightly from `0.117593` to `0.112037`; one shared hit moves from rank 1 to rank 2, while one new Intent Override hit is added.
 - One Browsing shared hit is delayed by one turn, although its rank improves from 10 to 1.
 - Multi-material answers can populate the single material slot with one component; the full answer still survives in query rewriting.
-- There are 77 tests, but no catalog-scale parser recall benchmark or private-set retrieval regression suite.
+- There are 118 tests and a general parser/state corpus, but no labeled parser-recall benchmark or private-set retrieval regression suite.
 - `requirements.txt` pins NumPy `2.3.5`; the kept runtime still uses the facet artifact built by the same offline script.
-- There is no turn-level evidence trace yet; Phase 2 has only component-level latency measurements.
+- Opt-in bounded component traces now cover state, query rewrite, lexical/facet retrieval, RRF, reranking, clarification preparation/coverage/EIG/selection, allocation, and response construction.
 
 ## Current metrics
 
@@ -170,6 +171,6 @@ The measured deviation from the earlier three-route proposal is deliberate: the 
 - Overall Efficiency: `0.297500`
 - Overall recommended TechnicalScore: `0.274689`
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
-- Tests: `77 passed, 0 failed` with pinned NumPy/artifacts
+- Tests: `118 passed, 0 failed` with pinned NumPy/artifacts
 
-Compared with P3-E002, HR@10 is `+0.110000`, MRR is `+0.060306`, MTTC is `-0.930000`, Efficiency is `+0.093000`, and TechnicalScore is `+0.091692`. Keep P4-E002 as the Phase 5 control while retaining P3-E002 (`TECHJAM_PHASE4_MODE=off`) as the ranking-only safety control.
+P6-E001 preserves these metrics and the frozen artifact hash exactly and is the Phase 7 control. P6-E002 lowered HR@10 to `0.300000` and TechnicalScore to `0.256785`, so semantic mode remains off.

@@ -1,0 +1,14 @@
+[
+  {"name":"accumulation","messages":["I need shoes","under $80","prefer black"]},
+  {"name":"soft_brand","messages":["Nike if possible"]},
+  {"name":"hard_feature","messages":["must be waterproof"]},
+  {"name":"negation","messages":["shoes, not leather"]},
+  {"name":"override","messages":["heels","actually sneakers instead"]},
+  {"name":"multiple_overrides","messages":["black shoes","actually white","actually make that blue"]},
+  {"name":"no_preference","asked_attribute":"color","messages":["I don't have a preference for color; any color is fine."]},
+  {"name":"ordinal_rejection","messages":["not the first one"]},
+  {"name":"style_rejection","messages":["formal shoes","those are too formal"]},
+  {"name":"browsing","messages":["something for a beach holiday"]},
+  {"name":"boundary","messages":["I want something nice"]},
+  {"name":"feature_walks","messages":["I need something comfortable for long walks"]}
+]

@@ -1,6 +1,6 @@
 # Repository Overview
 
-Phase 0 inventory was recorded on 2026-08-28 and revalidated on 2026-08-29 from commit `6c5d3d16b319460631b5e684fb72cae9979820d4`. Phases 1–4 were completed on 2026-08-29 without changing the official evaluator, catalog, labels, or scoring logic. Phase 2 selected lexical + facet retrieval with dense disabled; Phase 3 kept deterministic feature reranking; Phase 4 added the selected catalog-backed clarification policy while leaving persistence inactive.
+Phase 0 inventory was recorded on 2026-08-28 and revalidated on 2026-08-29 from commit `6c5d3d16b319460631b5e684fb72cae9979820d4`. Phases 1–7 were completed on 2026-08-29 without changing the official evaluator, catalog, labels, or scoring logic. Phase 7 froze P6-E001 and added submission auditing, defensive validation, regression tests, profiling, and final documentation without changing the selected algorithm.
 
 This document answers: **What exists in this repository, and where do I find it?**
 
@@ -35,6 +35,11 @@ This document answers: **What exists in this repository, and where do I find it?
 |   |-- agent.py                       Official Agent, lexical route, hybrid orchestration/fallback
 |   |-- clarification.py               Coverage/EIG analyzer, templates, and ask/no-ask policy
 |   |-- clarification_config.py        Phase 4 modes, weights, thresholds, and turn schedule
+|   |-- phase5_config.py               Tracing/cache and rank-only/hedge experiment settings
+|   |-- phase6_config.py               Optional semantic provider/shortlist/fusion settings
+|   |-- runtime_trace.py               Bounded opt-in component latency/failure records
+|   |-- semantic.py                    Provider-neutral shortlist reranker, local provider, cache/fallback
+|   |-- topk.py                        Rank-only control and conservative rank-10 hedge
 |   |-- ranking/
 |   |   |-- config.py                  Phase 3 modes, pool settings, and explained weights
 |   |   |-- evidence.py                Per-session candidate evidence pool and persistence score
@@ -49,20 +54,27 @@ This document answers: **What exists in this repository, and where do I find it?
 |   `-- understanding.py               Deterministic parser and active-state query rewrite
 |-- scripts/
 |   |-- build_retrieval_index.py       Reproducible one-time artifact build command
-|   `-- phase4_diagnostics.py          Official-evaluator wrapper and causal trace export
+|   |-- phase4_diagnostics.py          Official-evaluator wrapper and causal trace export
+|   |-- phase5_benchmark.py            Full evaluator latency/behavior/memory benchmark
+|   |-- phase7_submission_audit.py     Environment/artifact/contract/output audit
+|   `-- phase7_demo.py                 Reproducible two-turn demonstration trace
 |-- tests/
 |   |-- __init__.py
 |   |-- test_evaluator.py              Three evaluator behavior tests
 |   |-- test_phase1_state.py           Twelve Phase 1 state/parser/integration tests
 |   |-- test_phase2_retrieval.py       Dense/facet/RRF/fallback/integration tests
 |   |-- test_phase3_ranking.py         Persistence/reranker/unit/integration tests
-|   `-- test_phase4_clarification.py   Coverage/EIG/policy/schema/integration tests
+|   |-- test_phase4_clarification.py   Coverage/EIG/policy/schema/integration tests
+|   |-- test_phase5_reliability_topk.py Cache/fallback/tracing/allocator tests
+|   |-- test_phase6_performance_semantic.py Deterministic equivalence and semantic safety tests
+|   |-- test_phase7_submission.py      Failure matrix, contract, and parser corpus
+|   `-- fixtures/phase7_state_regression.json General language/state cases
 |-- requirements.txt                   Pinned NumPy 2.3.5 dependency
 |-- .gitignore                         Ignores local catalog, results, secrets, and caches
 `-- results.json                       Generated evaluator output; ignored
 ```
 
-`data/catalog.jsonl` and `results.json` are local generated artifacts. `artifacts/evaluation/` is ignored; `artifacts/retrieval/` must be included in the final package or rebuilt once from the frozen catalog.
+`data/catalog.jsonl` and `results.json` are local generated artifacts. `artifacts/evaluation/` is ignored. The compressed catalog and required facet files in `artifacts/retrieval/` are packaged; the dense files are optional rolled-back experiment assets.
 
 ## Official entrypoint and import contract
 
@@ -219,6 +231,42 @@ Each already-known askable attribute adds `0.06`; Buying adds `0.12`; Browsing s
 
 `SessionState.question_analysis_history` stores every attribute trace; `phase4_turn_history` stores the user message, rewritten query, question decision, slots, and recommendations. `scripts/phase4_diagnostics.py` runs the untouched evaluator function and correlates those states by reset order to export question statistics and causal next-turn records. No target IDs enter runtime decisions.
 
+## Phase 5 performance, reliability, and allocation
+
+P5-E001 reuses the Phase 3 `CatalogFeatureStore` as the clarification cache. When clarification is active, `retain_all()` raises the existing bounded cache to catalog capacity, so each immutable product record is decoded at most once per Agent process. `starter/clarification.py::_attribute_value_matrix` transposes the same P4 values in one candidate pass; extraction, coverage, entropy, EIG, thresholds, templates, and selection order are unchanged.
+
+`starter/runtime_trace.py` provides bounded opt-in records controlled by `TECHJAM_TRACE_ENABLED` and `TECHJAM_TRACE_LIMIT`. Records contain session ID, turn, component, elapsed time, success/failure, fallback use, and error type. Components cover state, query rewrite, lexical/facet retrieval, RRF, reranking, clarification preparation, coverage, entropy/EIG, selection, Top-K allocation, and response construction. Tracing is disabled by default and never enters the official response.
+
+Fallback order is:
+
+```text
+clarification unavailable/corrupt/exception -> no question + ranked recommendations
+Top-K allocation exception                -> raw reranker Top 10
+facet route unavailable                   -> existing lexical route/fusion fallback
+```
+
+`starter/topk.py` contains both P5-E002 modes. `rank_only` is the selected default and reproduces P5-E001/P4-E002 exactly. Experimental `hedge` protects ranks 1–9 and may replace only rank 10 from configurable ranks 11–30 when an unknown/soft catalog attribute is strongly dominated, the candidate is close in score, and no hard conflict/rejection exists. It activated 30 times without changing any official outcome, so it remains inactive.
+
+## Phase 6 deterministic and semantic paths
+
+P6-E001 preserves the P5 scoring path exactly. `DeterministicFeatureScorer.rank()` compiles slot token sets, hard/soft flags, negative token sets, budgets, rejected IDs, and weight iteration once per turn rather than once per product. `Agent._lexical_search()` maintains a bounded 4,096-entry LRU keyed by the exact prepared FTS5 OR expression and requested Top-N. The FTS5 table, BM25 weights, tokenizer, query terms, Top-100 limit, and row ordering are unchanged. The selected output remains byte-identical to P5-E001.
+
+Startup still builds the immutable 50k FTS5 index in memory. An offline SQLite FTS artifact was considered but not added: it would duplicate the 60.5 MB source into a substantially larger submission asset for a one-process startup benefit, while missing-artifact fallback would still need the existing builder.
+
+`starter/semantic.py` contains the P6-E002 provider-neutral interface, strict ID validator, exact-input cache, conservative rank fusion, and local `CatalogEncoderSemanticProvider`. The experiment uses the existing checksum-validated `catalog_random_indexing_v1` artifacts only to score the supplied Top-30 shortlist; it never invokes global nearest-neighbour retrieval. The request contains active rewritten intent, structured hard/soft slots, negatives, and compact catalog candidate information. The deterministic Top 3 are protected; positions 4–30 use deterministic/semantic RRF with semantic weight `0.35`. Reliable conflicts and rejected products cannot be promoted.
+
+Configuration:
+
+- `TECHJAM_SEMANTIC_RERANK_MODE=off|optional` (`off` selected)
+- `TECHJAM_SEMANTIC_PROVIDER=none|catalog_encoder`
+- `TECHJAM_SEMANTIC_RERANK_K` (20–40; experiment 30)
+- `TECHJAM_SEMANTIC_PROTECTED_TOP_N` (experiment 3)
+- `TECHJAM_SEMANTIC_WEIGHT` (experiment `0.35`)
+- `TECHJAM_SEMANTIC_RRF_K` (experiment `60`)
+- `TECHJAM_SEMANTIC_CACHE_SIZE` (default 2,048)
+
+The default is fully offline deterministic P6-E001. In optional mode, missing/corrupt artifacts, unavailable provider, invalid IDs, empty encodings, timeouts, and provider exceptions fall back to P6-E001. P6-E002 was rolled back because it lost six hits while adding one.
+
 ## Current indexing architecture
 
 The lexical control remains unchanged: `Agent.__init__()` creates an in-memory SQLite FTS5 table and rebuilds it from all 50,000 catalog rows for every new process. Indexed columns and BM25 weights are:
@@ -269,6 +317,8 @@ The safe facet artifact contains postings derived only from catalog categories, 
 
 Dense build time was `95.407 s`; facet build time was `5.117 s`; end-to-end build time was `100.935 s` on the local bundled Python 3.12/NumPy 2.3.5 runtime.
 
+Only `manifest.json`, `product_ids.json`, `facet_index.npz`, and `facet_tokens.json` are required for the active facet route: `1,848,666` bytes (`1.76 MiB`) total. The other `30,499,523` bytes are optional dense-experiment reproducibility assets and are not loaded by default.
+
 ### Offline/submission conclusion
 
 The official rules permit declared dependencies and lightweight local assets and document no explicit artifact-size limit. They also warn that network access may be disabled. The project therefore pins `numpy==2.3.5`, packages or locally builds the catalog-trained artifacts, performs no model download, and needs no evaluator-time network access. The default lexical + facet path does not load the dense artifacts; the optional dense experiment path retains checksum validation and lexical fallback.
@@ -294,16 +344,19 @@ The official rules permit declared dependencies and lightweight local assets and
 | Deterministic reranker | `starter/ranking/features.py` | Implemented/tested as P3-E002; current ranking stage |
 | Information gain / facet coverage | `starter/clarification.py::InformationGainAnalyzer` | Implemented/tested as P4-E001; diagnostic layer retained |
 | Turn and question policy | `starter/clarification.py::ConservativeQuestionPolicy` | Implemented/tested as P4-E002; current default |
-| Top-K allocator | `starter/agent.py` and evaluator normalization in `evaluator/local_evaluator.py` | Only raw BM25 order and validity normalization; Phase 5 allocator absent |
+| Deterministic performance path | `starter/agent.py::_lexical_search`, `starter/ranking/features.py` | P6-E001 exact-expression BM25 cache and compiled state; current default |
+| Semantic shortlist reranker | `starter/semantic.py`, `starter/phase6_config.py` | P6-E002 implemented/tested; disabled after regression |
+| Top-K allocator | `starter/topk.py` | `rank_only` default; experimental rank-10 hedge rolled back after no measurable gain |
 | LLM adapter / semantic reranker | None | Not implemented; optional Phase 6 |
-| Dense-to-lexical fallback | `starter/agent.py::_load_optional_retrievers` and `_search` | Implemented in Phase 2; full tiered fallback/tracing remains Phase 5 |
+| Runtime tracing/fallback | `starter/runtime_trace.py`, `starter/agent.py` | Opt-in bounded component traces; clarification and allocation fail safely |
+| Phase 5 benchmark | `scripts/phase5_benchmark.py` | Official-evaluator timing, behavior fingerprints, and allocation statistics |
 | Catalog loader | `starter/agent.py::_build_index` and `evaluator/local_evaluator.py::catalog_index` | Present; each independently streams the JSONL file |
 | Public evaluator | `evaluator/local_evaluator.py` | Present; do not modify |
 | Public development sessions | `data/public_set.jsonl` | Present: 200 labeled sessions |
 | Frozen catalog | `data/catalog.jsonl.gz` | Present: 50,000 unique products |
 | Evaluation configuration | `docs/evaluation_config.json` | Present |
 | Requirements | `requirements.txt` | `numpy==2.3.5`; exact pin matches artifact build runtime |
-| Tests | `tests/test_evaluator.py`, `tests/test_phase1_state.py`, `tests/test_phase2_retrieval.py`, `tests/test_phase3_ranking.py`, `tests/test_phase4_clarification.py` | 77 total tests |
+| Tests | `tests/test_evaluator.py`, `tests/test_phase1_state.py`, `tests/test_phase2_retrieval.py`, `tests/test_phase3_ranking.py`, `tests/test_phase4_clarification.py`, `tests/test_phase5_reliability_topk.py`, `tests/test_phase6_performance_semantic.py` | 103 total tests |
 | Experiment log | `docs/EXPERIMENT_LOG.md` | Created in Phase 0 |
 
 ## Data snapshot
@@ -410,13 +463,41 @@ python -m scripts.phase4_diagnostics --output artifacts/evaluation/p4_e002_diagn
 
 Unset `TECHJAM_PHASE4_MODE` to use the selected `ask` default.
 
+### Reproduce Phase 5 sub-experiments
+
+```powershell
+$env:TECHJAM_TOPK_MODE='rank_only'
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p5_e001_final.json --timing-output artifacts/evaluation/p5_e001_final_timing.json --diagnostic-output artifacts/evaluation/p5_e001_diagnostics.json
+
+$env:TECHJAM_TOPK_MODE='hedge'
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p5_e002.json --timing-output artifacts/evaluation/p5_e002_timing.json --diagnostic-output artifacts/evaluation/p5_e002_diagnostics.json
+```
+
+Unset `TECHJAM_TOPK_MODE` to use selected `rank_only`. Set `TECHJAM_TRACE_ENABLED=1` only for diagnostics; normal evaluation keeps tracing off.
+
+### Reproduce Phase 6 sub-experiments
+
+```powershell
+$env:TECHJAM_SEMANTIC_RERANK_MODE='off'
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p6_e001.json --timing-output artifacts/evaluation/p6_e001_timing.json --diagnostic-output artifacts/evaluation/p6_e001_diagnostics.json
+
+$env:TECHJAM_SEMANTIC_RERANK_MODE='optional'
+$env:TECHJAM_SEMANTIC_PROVIDER='catalog_encoder'
+$env:TECHJAM_SEMANTIC_RERANK_K='30'
+$env:TECHJAM_SEMANTIC_PROTECTED_TOP_N='3'
+$env:TECHJAM_SEMANTIC_WEIGHT='0.35'
+python -m scripts.phase5_benchmark --output artifacts/evaluation/p6_e002.json --timing-output artifacts/evaluation/p6_e002_timing.json --diagnostic-output artifacts/evaluation/p6_e002_diagnostics.json
+```
+
+Unset the semantic variables to use the selected offline deterministic control. The experiment requires the already-packaged Phase 2 dense encoder artifacts, but global dense retrieval remains disabled.
+
 ## Current implementation status
 
-Phase 4 is complete. P4-E001 is the byte-identical diagnostic control above P3-E002. P4-E002 adds conservative catalog-backed questions and is the selected runtime. P2-E005 remains the frozen candidate generator; P3-E002 remains the ranking control. Dense and persistence remain available but inactive. Phase 5 has not started.
+Phase 7 is complete and the final algorithm is frozen. P6-E001 preserves P5-E001 byte-for-byte while materially reducing reranking and BM25 latency. P6-E002 degraded official metrics and is disabled. The selected runtime is P6-E001 with semantic mode `off`, Top-K `rank_only`, dense retrieval disabled, and persistence disabled. Phase 7 adds output validation and submission evidence only.
 
 ## Current best metrics
 
-The current best official TechnicalScore is Phase 4 experiment `P4-E002`:
+The current best official TechnicalScore is shared by P4-E002, P5-E001, and the behavior-identical kept P6-E001:
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
@@ -426,4 +507,16 @@ The current best official TechnicalScore is Phase 4 experiment `P4-E002`:
 | Intent Override | 30 | 0.233333 | 0.112037 | 9.400000 |
 | Boundary | 10 | 0.300000 | 0.050000 | 8.200000 |
 
-Overall Efficiency is `0.297500`; overall recommended TechnicalScore is `0.274689`. Versus P3-E002, P4-E002 has 22 new hits, 0 lost hits, 1 better rank, 1 worse rank, 0 earlier shared hits, and 1 later shared hit. TechnicalScore is `+0.091692`; reported token usage remains zero. The final suite has `77 passed, 0 failed`.
+Overall Efficiency is `0.297500`; overall recommended TechnicalScore is `0.274689`. Three Phase 7 evaluator-compatible reproductions and the final official run retain SHA-256 `F811F9B1440CA86A31B449CC2D770E4A15C5DE8BC01E685835FF98D936392B36`. P6-E002 scored HR@10 `0.300000`, MRR `0.171950`, and TechnicalScore `0.256785`, so it is rolled back. Reported token usage remains zero. The final suite has `118 passed, 0 failed`.
+
+## Phase 7 submission hardening
+
+`starter/agent.py::_validate_recommendations` and `starter/ranking/features.py::CatalogFeatureStore.contains` form the last response boundary: valid catalog IDs are retained in ranking order, duplicates/empty/non-catalog IDs are removed, and output is capped at `top_k`. Missing/corrupt facet artifacts still degrade to BM25; clarification and allocator exceptions preserve recommendations; disabled dense/semantic artifacts are not required.
+
+`scripts/phase7_submission_audit.py` inventories environment, catalog, artifacts, checksums, contract signatures, and evaluator output. `scripts/phase5_benchmark.py` now reports startup components and approximate process RSS. `scripts/phase7_demo.py` generates the human-readable two-turn evidence in `docs/FINAL_DEMONSTRATION.md`. The complete submission checklist, commands, hashes, latency/memory results, fallbacks, disclosure, and limitations are in `docs/FINAL_REPRODUCIBILITY_REPORT.md`.
+
+Final architecture classification:
+
+- **Active default:** session state, deterministic parser/patches, query rewriting, BM25, facets, weighted RRF, fresh deterministic reranker, information-gain clarification, rank-only Top 10, and safe fallbacks/output validation.
+- **Implemented but disabled/rolled back:** custom dense retrieval, persistent evidence, semantic reranking, and Top-K hedge allocation.
+- **Stretch not implemented:** RL, ProtoNet, FAISS, external LLM reranking, and runtime multi-agent orchestration.

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import asdict, dataclass
 from typing import Iterable, Sequence
 
 from starter.clarification_config import PhaseFourConfig
 from starter.ranking.features import CatalogFeatureStore, ProductFeatures, ScoredCandidate
 from starter.state import SessionState
+from starter.runtime_trace import RuntimeTraceRecorder
 
 
 ASKABLE_ATTRIBUTES = (
@@ -111,15 +113,38 @@ class InformationGainAnalyzer:
         self,
         candidates: Sequence[ScoredCandidate],
         state: SessionState,
+        trace_recorder: RuntimeTraceRecorder | None = None,
     ) -> QuestionAnalysis:
         limited = list(candidates[: self.config.question_candidate_k])
         probabilities = _candidate_probabilities(limited)
         uncertainty = _normalized_entropy(probabilities)
         top_confidence = max(probabilities, default=0.0)
+        preparation_started = time.perf_counter()
         products = [self.store.get(candidate.parent_asin) for candidate in limited]
+        value_matrix = _attribute_value_matrix(products)
+        if trace_recorder is not None:
+            trace_recorder.record(
+                state.session_id,
+                state.turn,
+                "clarification_candidate_preparation",
+                (time.perf_counter() - preparation_started) * 1000.0,
+            )
         traces: list[AttributeQuestionTrace] = []
+        coverage_elapsed = 0.0
+        eig_elapsed = 0.0
         for attribute in ASKABLE_ATTRIBUTES:
-            traces.append(self._attribute_trace(attribute, products, probabilities, state))
+            trace, coverage_ms, eig_ms = self._attribute_trace(
+                attribute,
+                value_matrix[attribute],
+                probabilities,
+                state,
+            )
+            traces.append(trace)
+            coverage_elapsed += coverage_ms
+            eig_elapsed += eig_ms
+        if trace_recorder is not None:
+            trace_recorder.record(state.session_id, state.turn, "facet_coverage", coverage_elapsed)
+            trace_recorder.record(state.session_id, state.turn, "entropy_eig", eig_elapsed)
         selectable = [trace for trace in traces if trace.final_question_score > 0.0]
         chosen = max(
             selectable,
@@ -140,14 +165,16 @@ class InformationGainAnalyzer:
     def _attribute_trace(
         self,
         attribute: str,
-        products: Sequence[ProductFeatures | None],
+        values: Sequence[tuple[str, ...]],
         probabilities: Sequence[float],
         state: SessionState,
-    ) -> AttributeQuestionTrace:
-        values = _attribute_values(attribute, products)
+    ) -> tuple[AttributeQuestionTrace, float, float]:
+        coverage_started = time.perf_counter()
         known_indexes = [index for index, value in enumerate(values) if value]
-        coverage = len(known_indexes) / len(products) if products else 0.0
+        coverage = len(known_indexes) / len(values) if values else 0.0
         known_mass = sum(probabilities[index] for index in known_indexes)
+        coverage_ms = (time.perf_counter() - coverage_started) * 1000.0
+        eig_started = time.perf_counter()
         entropy_before = 0.0
         expected_after = 0.0
         eig = 0.0
@@ -166,6 +193,7 @@ class InformationGainAnalyzer:
             eig = max(0.0, entropy_before - expected_after)
             if entropy_before > 0.0:
                 normalized_eig = min(1.0, eig / entropy_before)
+        eig_ms = (time.perf_counter() - eig_started) * 1000.0
 
         intent_relevance = _intent_relevance(attribute, state)
         category_relevance = _category_relevance(attribute, state)
@@ -207,7 +235,7 @@ class InformationGainAnalyzer:
             no_preference=no_preference,
             raw_question_score=round(raw_score, 8),
             final_question_score=round(final_score, 8),
-        )
+        ), coverage_ms, eig_ms
 
 
 class ConservativeQuestionPolicy:
@@ -279,16 +307,14 @@ def _normalized_entropy(probabilities: Sequence[float]) -> float:
     return _entropy(probabilities) / math.log2(len(probabilities))
 
 
-def _attribute_values(
-    attribute: str,
+def _attribute_value_matrix(
     products: Sequence[ProductFeatures | None],
-) -> list[tuple[str, ...]]:
-    if attribute == "budget":
-        return _budget_bands(products)
-    result: list[tuple[str, ...]] = []
+) -> dict[str, list[tuple[str, ...]]]:
+    matrix = {attribute: [] for attribute in ASKABLE_ATTRIBUTES if attribute != "budget"}
     for product in products:
         if product is None:
-            result.append(())
+            for values in matrix.values():
+                values.append(())
             continue
         mapping = {
             "category": product.category_values,
@@ -302,8 +328,10 @@ def _attribute_values(
             "occasion": product.occasion_values,
             "feature": product.feature_values,
         }
-        result.append(tuple(mapping[attribute]))
-    return result
+        for attribute, values in mapping.items():
+            matrix[attribute].append(tuple(values))
+    matrix["budget"] = _budget_bands(products)
+    return matrix
 
 
 def _budget_bands(products: Sequence[ProductFeatures | None]) -> list[tuple[str, ...]]:

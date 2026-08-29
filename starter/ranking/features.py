@@ -6,7 +6,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, NamedTuple
 
 from starter.ranking.config import FeatureWeights
 from starter.ranking.evidence import CandidateEvidence, FreshCandidate
@@ -52,6 +52,7 @@ FIT_RE = re.compile(
 @dataclass(frozen=True)
 class ProductFeatures:
     parent_asin: str
+    title: str
     all_terms: frozenset[str]
     category_terms: frozenset[str]
     brand_terms: frozenset[str]
@@ -75,6 +76,20 @@ class ScoredCandidate:
     score: float
     fresh_rank: int
     features: tuple[tuple[str, float], ...]
+
+
+class CompiledSlot(NamedTuple):
+    values: tuple[frozenset[str], ...]
+    hard: bool
+
+
+@dataclass(frozen=True)
+class CompiledRankingState:
+    slots: Mapping[str, CompiledSlot]
+    negative_terms: tuple[frozenset[str], ...]
+    budget_min: float | None
+    budget_max: float | None
+    rejected_product_ids: frozenset[str]
 
 
 class CatalogFeatureStore:
@@ -102,6 +117,17 @@ class CatalogFeatureStore:
     def __len__(self) -> int:
         return len(self._offsets)
 
+    def contains(self, identifier: str) -> bool:
+        return str(identifier) in self._offsets
+
+    def retain_all(self) -> None:
+        """Keep decoded immutable records once seen, without changing extraction."""
+        self.cache_size = max(self.cache_size, len(self._offsets))
+
+    @property
+    def cached_record_count(self) -> int:
+        return len(self._cache)
+
     def close(self) -> None:
         self._handle.close()
 
@@ -128,6 +154,7 @@ class DeterministicFeatureScorer:
     def __init__(self, store: CatalogFeatureStore, weights: FeatureWeights) -> None:
         self.store = store
         self.weights = weights
+        self._weighted_feature_items = _weighted_items(weights)
 
     def rank(
         self,
@@ -136,12 +163,13 @@ class DeterministicFeatureScorer:
         evidence: Mapping[str, CandidateEvidence] | None = None,
     ) -> list[ScoredCandidate]:
         scored: list[ScoredCandidate] = []
+        compiled_state = _compile_state(state)
         for candidate in fresh_candidates:
             product = self.store.get(candidate.parent_asin)
             if product is None:
                 continue
-            feature_values = self._feature_values(candidate, product, state, evidence)
-            total = sum(feature_values[name] * weight for name, weight in _weighted_items(self.weights))
+            feature_values = self._feature_values(candidate, product, compiled_state, evidence)
+            total = sum(feature_values[name] * weight for name, weight in self._weighted_feature_items)
             scored.append(
                 ScoredCandidate(
                     parent_asin=candidate.parent_asin,
@@ -159,7 +187,7 @@ class DeterministicFeatureScorer:
         self,
         candidate: FreshCandidate,
         product: ProductFeatures,
-        state: SessionState,
+        state: CompiledRankingState,
         evidence: Mapping[str, CandidateEvidence] | None,
     ) -> dict[str, float]:
         conflict = 0.0
@@ -200,9 +228,9 @@ class DeterministicFeatureScorer:
             style_conflict,
             occasion_conflict,
             feature_conflict,
-            _negative_conflict(state, product),
+            _negative_conflict_compiled(state, product),
         )
-        price, price_conflict = _price_compatibility(state, product.price)
+        price, price_conflict = _price_compatibility_compiled(state, product.price)
         conflict = max(conflict, price_conflict)
 
         record = evidence.get(candidate.parent_asin) if evidence else None
@@ -237,19 +265,43 @@ def _weighted_items(weights: FeatureWeights) -> tuple[tuple[str, float], ...]:
     return tuple((name, float(getattr(weights, name))) for name in weights.__dataclass_fields__)
 
 
+def _compile_state(state: SessionState) -> CompiledRankingState:
+    slots: dict[str, CompiledSlot] = {}
+    for name, slot in state.slots.items():
+        raw_values = slot.value if isinstance(slot.value, tuple) else (slot.value,)
+        slots[name] = CompiledSlot(
+            tuple(_tokens(value) for value in raw_values),
+            slot.strength == ConstraintStrength.HARD,
+        )
+    negative_terms = tuple(
+        terms
+        for values in state.negative_preferences.values()
+        for value in values
+        if (terms := _tokens(value))
+    )
+    minimum = state.slots.get("budget_min")
+    maximum = state.slots.get("budget_max")
+    return CompiledRankingState(
+        slots=slots,
+        negative_terms=negative_terms,
+        budget_min=None if minimum is None else float(minimum.value),
+        budget_max=None if maximum is None else float(maximum.value),
+        rejected_product_ids=frozenset(state.rejected_product_ids),
+    )
+
+
 def _slot_agreement(
-    slot: SlotValue | None,
+    slot: CompiledSlot | None,
     searchable_terms: frozenset[str],
     reliable_terms: frozenset[str],
 ) -> tuple[float, float]:
     if slot is None:
         return 0.0, 0.0
-    values = slot.value if isinstance(slot.value, tuple) else (slot.value,)
-    matches = [bool(_tokens(value) and _tokens(value).issubset(searchable_terms)) for value in values]
+    matches = [bool(value and value.issubset(searchable_terms)) for value in slot.values]
     if any(matches):
-        strength = 1.0 if slot.strength == ConstraintStrength.HARD else 0.65
+        strength = 1.0 if slot.hard else 0.65
         return strength * (sum(matches) / len(matches)), 0.0
-    if slot.strength == ConstraintStrength.HARD and reliable_terms:
+    if slot.hard and reliable_terms:
         return 0.0, 1.0
     return 0.0, 0.0
 
@@ -263,6 +315,10 @@ def _negative_conflict(state: SessionState, product: ProductFeatures) -> float:
     return 0.0
 
 
+def _negative_conflict_compiled(state: CompiledRankingState, product: ProductFeatures) -> float:
+    return float(any(terms.issubset(product.all_terms) for terms in state.negative_terms))
+
+
 def _price_compatibility(state: SessionState, price: float | None) -> tuple[float, float]:
     minimum = state.slots.get("budget_min")
     maximum = state.slots.get("budget_max")
@@ -273,6 +329,21 @@ def _price_compatibility(state: SessionState, price: float | None) -> tuple[floa
     if minimum is not None and price < float(minimum.value):
         return 0.0, 1.0
     if maximum is not None and price > float(maximum.value):
+        return 0.0, 1.0
+    return 1.0, 0.0
+
+
+def _price_compatibility_compiled(
+    state: CompiledRankingState,
+    price: float | None,
+) -> tuple[float, float]:
+    if state.budget_min is None and state.budget_max is None:
+        return 0.0, 0.0
+    if price is None:
+        return 0.0, 0.0
+    if state.budget_min is not None and price < state.budget_min:
+        return 0.0, 1.0
+    if state.budget_max is not None and price > state.budget_max:
         return 0.0, 1.0
     return 1.0, 0.0
 
@@ -306,6 +377,7 @@ def _product_features(product: dict) -> ProductFeatures:
     brand_values = _brand_values(store, brand_detail)
     return ProductFeatures(
         parent_asin=identifier,
+        title=title,
         all_terms=all_terms,
         category_terms=_tokens(categories),
         brand_terms=_tokens(" ".join((store, brand_detail))),
