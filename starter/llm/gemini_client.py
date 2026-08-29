@@ -33,8 +33,7 @@ class GeminiRerankClient:
 
     def rerank(self, request: RerankRequest) -> RerankReply:
         types = self._types
-        # thinking_budget=0 ("disabled") is documented generically but this
-        # model generation rejects it with a bare 400 - omit thinking_config
+        # thinking_budget=0 ("disabled"), omit thinking_config
         # for "low" effort instead and let the model use its own default.
         thinking_budget = {"medium": 512, "high": 2048}.get(self.config.effort)
         config_kwargs = dict(

@@ -6,7 +6,10 @@
 # lexical + facet path. Pin to ==2.3.5 if you also enable the dense route.
 numpy>=2.3.5,<3
 
-# Optional, Phase 6 only. The default agent never imports it, makes no network
-# call, and reports zero tokens. Install and set ANTHROPIC_API_KEY only when
-# running TECHJAM_PHASE6_MODE=shadow or rerank.
-# anthropic>=0.116.0
+# Optional, Phase 6 only. The default agent never imports any of these, makes
+# no network call, and reports zero tokens. Install the one matching
+# TECHJAM_LLM_PROVIDER and set its API key only when running
+# TECHJAM_PHASE6_MODE=shadow or rerank.
+# anthropic>=0.116.0          # provider=anthropic (default), ANTHROPIC_API_KEY
+# google-genai>=1.0.0         # provider=gemini, GEMINI_API_KEY
+# openai>=2.0.0               # provider=nvidia (NIM, OpenAI-compatible), NVIDIA_API_KEY

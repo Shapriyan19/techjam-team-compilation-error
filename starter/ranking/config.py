@@ -34,6 +34,10 @@ class FeatureWeights:
     style: float = 0.06
     occasion: float = 0.05
     feature_overlap: float = 0.10
+    # Agreement with the shopper's literal phrases. Weighted well above the
+    # single-slot features because it is a conjunction: matching several stated
+    # phrases at once is far more discriminating than matching any one of them.
+    fragment_agreement: float = 2.00
     price: float = 0.12
     persistence: float = 0.05
     recency: float = 0.02
@@ -91,6 +95,7 @@ class PhaseThreeConfig:
                 style=_environment_float("TECHJAM_FEATURE_STYLE", 0.06),
                 occasion=_environment_float("TECHJAM_FEATURE_OCCASION", 0.05),
                 feature_overlap=_environment_float("TECHJAM_FEATURE_OVERLAP", 0.10),
+                fragment_agreement=_environment_float("TECHJAM_FEATURE_FRAGMENT", 2.00),
                 price=_environment_float("TECHJAM_FEATURE_PRICE", 0.12),
                 persistence=_environment_float("TECHJAM_FEATURE_PERSISTENCE", 0.05),
                 recency=_environment_float("TECHJAM_FEATURE_RECENCY", 0.02),

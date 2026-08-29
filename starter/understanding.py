@@ -368,6 +368,14 @@ def update_state_from_message(state: SessionState, message: str, turn: int) -> P
         retained = _clean_free_text(state, message)
         if retained:
             state.retained_query_text = retained
+        # Accumulate the literal claims; their conjunction is the signal.
+        collected = list(state.verbatim_fragments)
+        seen = {value.casefold() for value in collected}
+        for fragment in extract_verbatim_fragments(message):
+            if fragment.casefold() not in seen:
+                seen.add(fragment.casefold())
+                collected.append(fragment)
+        state.verbatim_fragments = tuple(collected)
     if NO_PREFERENCE_RE.search(message):
         state.record_no_preference_for_last_question()
     parsed = parse_message(message, turn, state)
@@ -429,6 +437,50 @@ def rewrite_query(state: SessionState) -> str:
 def is_non_clue_message(message: str) -> bool:
     """True for replies that carry no search signal, e.g. 'no preference'."""
     return bool(REJECTION_RE.search(message) or NO_PREFERENCE_RE.search(message))
+
+
+# Lead-ins the shopper's phrasing tends to hang the real content off. Stripped
+# so the fragment is the claim itself, not the sentence that introduces it.
+FRAGMENT_LEAD_IN_RE = re.compile(
+    r"^.*?\b(?:what matters is|key requirement is|requirement is|matters is|"
+    r"looking for|i need|i want)\b\s*:?\s*",
+    re.IGNORECASE,
+)
+MINIMUM_FRAGMENT_TOKENS = 2
+FRAGMENT_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+# A negated phrase must never become positive evidence: scoring "no leather"
+# as a fragment would reward exactly the products the shopper ruled out.
+# "non" is excluded on purpose so "non-slip" survives as a real feature.
+FRAGMENT_NEGATION_RE = re.compile(
+    r"\b(?:no|not|without|avoid|avoiding|exclude|excluding|never|"
+    r"don'?t|doesn'?t|isn'?t|rather not)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_verbatim_fragments(message: str) -> tuple[str, ...]:
+    """Pull the shopper's literal claims out of one message.
+
+    Deliberately not tied to the local simulator's exact sentence template: it
+    strips whatever lead-in is present, then splits on the separators these
+    replies actually use. A private simulator that paraphrases will still yield
+    usable fragments, just less exact ones - which the scorer handles by
+    falling back to partial credit.
+    """
+    if not message or is_non_clue_message(message):
+        return ()
+    body = " ".join(str(message).split())
+    fragments: list[str] = []
+    for piece in re.split(r"[;•|]|(?<=[a-z0-9])\.\s+", body):
+        # Strip the lead-in per piece: a message often opens with a framing
+        # clause and carries the real claim in a later sentence.
+        cleaned = FRAGMENT_LEAD_IN_RE.sub("", piece.strip(), count=1)
+        cleaned = cleaned.strip().strip(" ,.;:-•")
+        if FRAGMENT_NEGATION_RE.search(cleaned):
+            continue
+        if len(FRAGMENT_TOKEN_RE.findall(cleaned)) >= MINIMUM_FRAGMENT_TOKENS:
+            fragments.append(cleaned)
+    return tuple(fragments)
 
 
 def _clean_free_text(state: SessionState, text: str) -> str:

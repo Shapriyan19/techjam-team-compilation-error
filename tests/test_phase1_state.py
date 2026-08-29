@@ -95,6 +95,50 @@ class PhaseOneStateTest(unittest.TestCase):
             ("comfortable", "waterproof", "lightweight"),
         )
 
+    def test_verbatim_fragments_accumulate_across_turns(self) -> None:
+        state = self.state_after(
+            "I'm looking for shoes. A key requirement is: 100% Croslite; Imported.",
+            "For that, what matters is: Slip-on For Easy On And Off.",
+        )
+
+        joined = " | ".join(state.verbatim_fragments).casefold()
+        self.assertIn("100% croslite", joined)
+        self.assertIn("slip-on for easy on and off", joined)
+        # The framing clause must not survive into the stored fragment.
+        self.assertNotIn("key requirement is", joined)
+
+    def test_single_word_fragments_are_dropped_as_noise(self) -> None:
+        # Lone words like "Imported" match thousands of listings; only phrases
+        # carry enough signal to be worth scoring.
+        state = self.state_after("For that, what matters is: Imported.")
+
+        self.assertEqual(state.verbatim_fragments, ())
+
+    def test_verbatim_fragments_skip_non_clue_replies(self) -> None:
+        state = self.state_after(
+            "For that, what matters is: 100% Croslite.",
+            "I don't have an additional preference for brand.",
+        )
+
+        self.assertEqual(len(state.verbatim_fragments), 1)
+
+    def test_negated_phrases_never_become_positive_fragments(self) -> None:
+        # Scoring "no leather" as evidence would promote the exact products
+        # the shopper ruled out.
+        state = self.state_after("I want boots, but no leather and not too heavy.")
+
+        joined = " ".join(state.verbatim_fragments).casefold()
+        self.assertNotIn("leather", joined)
+        self.assertNotIn("heavy", joined)
+
+    def test_fragments_are_deduplicated(self) -> None:
+        state = self.state_after(
+            "For that, what matters is: Imported.",
+            "For that, what matters is: Imported.",
+        )
+
+        self.assertEqual(len(state.verbatim_fragments), len(set(state.verbatim_fragments)))
+
     def test_rejection_is_tracked_but_not_used_as_a_positive_query(self) -> None:
         state = self.state_after("black shoes", "Those options are not quite right yet.")
         query = rewrite_query(state).casefold()

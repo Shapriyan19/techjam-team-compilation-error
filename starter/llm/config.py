@@ -5,18 +5,28 @@ from dataclasses import dataclass
 
 
 PHASE6_MODES = frozenset({"off", "shadow", "rerank"})
-PHASE6_PROVIDERS = frozenset({"anthropic", "gemini"})
+PHASE6_PROVIDERS = frozenset({"anthropic", "gemini", "nvidia"})
 
 # Claude Opus 5 is the current default model. The reranking prompt is short and
 # highly structured, so the request runs at low effort with adaptive thinking.
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_MODEL_BY_PROVIDER = {
     "anthropic": "claude-opus-5",
-    "gemini": "gemini-2.5-flash",
+    # gemini-2.5-flash is no longer available to new-user projects as of this
+    # writing (the API's own 404 names gemini-3.6-flash as the replacement);
+    # verified live against the real endpoint before setting this default.
+    "gemini": "gemini-3.6-flash",
+    # Nemotron 3.5 Lightning: ~7x faster per call than the 550B Ultra below
+    # (0.9s vs 6.4s on a 5-candidate probe) and ranks the same probe correctly.
+    # Note: OpenRouter lists this family as "nemotron-3.5-lightning:free"; on
+    # NVIDIA NIM the served ID is the one below - verified via models.list().
+    "nvidia": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    # "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",  # previous default
 }
 DEFAULT_KEY_VARIABLE_BY_PROVIDER = {
     "anthropic": "ANTHROPIC_API_KEY",
     "gemini": "GEMINI_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
 }
 
 

@@ -48,6 +48,7 @@ This document answers: **What changes improved or worsened the score?**
 | P8-E004 | Buying threshold increment `0.12` -> `0.0` | 0.735000 | 0.353073 | 4.955000 | 0.604500 | 0.594322 | 0.725000 / 0.395823 / 4.550000 | 0.800000 / 0.338829 / 4.387500 | 0.600000 / 0.289008 / 7.266667 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 | P8-E005 | Allow questions through turn 9 (`last_question_turn` 9 -> 10) | 0.745000 | 0.354462 | 4.945000 | 0.605500 | 0.599939 | 0.737500 / 0.397212 / 4.537500 | 0.800000 / 0.338829 / 4.387500 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 | P9-E001 | Feature reranker weights: `color` 0.10 -> 0.20, `conflict` 0.35 -> 0.20 | 0.750000 | 0.357343 | 4.905000 | 0.609500 | 0.604103 | 0.737500 / 0.397212 / 4.537500 | 0.812500 / 0.343579 / 4.325000 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
+| P11-E001 | Verbatim-evidence layer: accumulate the shopper's literal phrases, score candidates on graded conjunction agreement | 0.845000 | 0.448486 | 3.845000 | 0.715500 | 0.700146 | 0.825000 / 0.416429 / 3.375000 | 0.900000 / 0.495987 / 3.512500 | 0.766667 / 0.423929 / 5.766667 | 0.800000 / 0.398611 / 4.500000 | Keep/default |
 
 ## P0-E000 — untouched starter baseline
 
@@ -765,6 +766,83 @@ Decision: **Keep as the Phase 3 default.** Small in isolation, but principled: i
 measured underweighting rather than fitting the miss set directly, is net-positive on shared-hit
 ranks (5 vs 3), and loses nothing. `route_support` and `retrieval_rank` remain unchanged — the data
 argue against touching either.
+
+## P11-E001 — verbatim-evidence layer
+
+- Date: 2026-08-30
+- Control: `P9-E001`, HR@10 `0.750000`, TechnicalScore `0.604103`.
+- Files modified: `starter/state.py`, `starter/understanding.py`,
+  `starter/ranking/features.py`, `starter/ranking/config.py`,
+  `tests/test_phase1_state.py`.
+- Tests: `137 passed, 0 failed`. No network, no API calls, fully deterministic.
+
+### Why
+
+After Phases 8-9 retrieval recall reached `199/200`, so all remaining loss was ranking. The
+simulator answers with strings lifted from the target's own catalog record, which the pipeline
+was destroying: `_terms()` tokenizes and ORs, so `100% Croslite; Imported` became loose
+bag-of-words and the phrase structure - the actual signal - was lost.
+
+Two hypotheses were measured before any code was written:
+
+| Hypothesis | Result |
+|---|---|
+| Match a single fragment | **Rejected.** Median fragment matches `1,185` products; only 3 of 31 were uniquely identifying. Generic boilerplate ("Adjustable closure", "Imported"). |
+| Match the conjunction of all fragments | **Confirmed.** Target was in the top-scoring group **41/41**, median group size **23**, and 12 of 41 groups were `<=10` (an automatic hit). |
+
+Individually the clues are weak; stacked they are close to a fingerprint.
+
+### Design
+
+`SessionState.verbatim_fragments` accumulates the shopper's literal phrases, deduplicated,
+recorded in `update_state_from_message` so it does not depend on any later call. Extraction is
+deliberately not tied to the local simulator's sentence template: it strips whatever lead-in is
+present per piece, splits on the separators these replies actually use, and drops single-token
+fragments as noise. `DeterministicFeatureScorer` adds a `fragment_agreement` feature at weight
+`2.00` - far above the single-slot features, because a conjunction is far more discriminating
+than any one clue.
+
+Scoring is **graded, not binary**, and this mattered more than expected. A flat `1.0` for an exact
+phrase hit ties together every product sharing that phrase (often dozens) and destroys ordering
+*within* the tie; binary scoring measured `0.676`-`0.695` TechnicalScore across normalization
+variants, while graded coverage plus a `0.5` exact-phrase bonus reached `0.700146`. Coverage is
+squared so incidental overlap on common words stays near zero. This is also the paraphrase
+safeguard: a reworded fragment keeps most of its credit instead of falling to zero.
+
+Measured on 60 sessions, **66.4%** of accumulated fragments match the true target verbatim, with
+a median of 2 fragments per session.
+
+Never a filter: excluding non-matching candidates would drop the true target whenever one phrase
+is simply absent from a sparse listing.
+
+### Regression caught by the suite
+
+The first implementation extracted negated phrases as positive evidence - `no leather` scored a
+leather product *upward*, promoting exactly what the shopper ruled out.
+`test_negative_material_evidence_penalizes_matching_product` failed and exposed it.
+`FRAGMENT_NEGATION_RE` now skips negated fragments (excluding `non`, so `non-slip` survives), with
+`test_negated_phrases_never_become_positive_fragments` covering it.
+
+### Result
+
+| | control | P11-E001 | delta |
+|---|---:|---:|---:|
+| HR@10 | 0.750000 | 0.845000 | +0.095000 |
+| MRR | 0.357343 | 0.448486 | +0.091143 |
+| MTTC | 4.905000 | 3.845000 | -1.060000 |
+| Efficiency | 0.609500 | 0.715500 | +0.106000 |
+| TechnicalScore | 0.604103 | 0.700146 | +0.096043 |
+
+Session delta: **22 new hits, 3 lost, 56 better ranks, 26 worse, 34 earlier turns, 10 later.**
+Every scenario improves: Buying `0.737500 -> 0.825000`, Browsing `0.800000 -> 0.900000`,
+Intent Override `0.633333 -> 0.766667`, Boundary `0.700000 -> 0.800000`. Unlike prior ranking work
+this lifts MRR as much as HR@10 - the conjunction does not just locate the target, it promotes it.
+
+Decision: **Keep as default.**
+
+Caveat: the mechanism is measured and principled, but the constants (weight `2.00`, saturation
+`3.0`, exact bonus `0.5`) were tuned on 200 public sessions and will not transfer exactly to the
+private split. The graded scoring is the deliberate hedge against a paraphrasing private simulator.
 
 ## Template for the next evaluated change
 

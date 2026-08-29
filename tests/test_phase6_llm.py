@@ -193,6 +193,81 @@ class PhaseSixConfigTest(unittest.TestCase):
     def test_default_model_is_the_current_claude_opus(self) -> None:
         self.assertEqual(PhaseSixConfig().model, "claude-opus-5")
 
+    def test_unsupported_provider_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            PhaseSixConfig(provider="mistral")
+
+    def test_from_environment_infers_model_and_key_variable_per_provider(self) -> None:
+        for provider, model, key_variable in (
+            ("anthropic", "claude-opus-5", "ANTHROPIC_API_KEY"),
+            ("gemini", "gemini-3.6-flash", "GEMINI_API_KEY"),
+            ("nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b", "NVIDIA_API_KEY"),
+        ):
+            with unittest.mock.patch.dict(os.environ, {"TECHJAM_LLM_PROVIDER": provider}, clear=False):
+                config = PhaseSixConfig.from_environment()
+            self.assertEqual(config.provider, provider)
+            self.assertEqual(config.model, model)
+            self.assertEqual(config.api_key_variable, key_variable)
+
+    def test_explicit_model_overrides_the_provider_default(self) -> None:
+        environment = {"TECHJAM_LLM_PROVIDER": "gemini", "TECHJAM_LLM_MODEL": "gemini-flash-lite-latest"}
+        with unittest.mock.patch.dict(os.environ, environment, clear=False):
+            config = PhaseSixConfig.from_environment()
+        self.assertEqual(config.model, "gemini-flash-lite-latest")
+
+
+class ProviderSelectionTest(unittest.TestCase):
+    """The Agent must route to the client class matching phase6_config.provider."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.catalog_path = Path(self.directory.name) / "catalog.jsonl"
+        self.catalog_path.write_text(json.dumps(_product("A", "Shoe")) + "\n", encoding="utf-8")
+        self.addCleanup(self.directory.cleanup)
+
+    def test_gemini_provider_selects_gemini_client_class(self) -> None:
+        from starter.llm.gemini_client import GeminiRerankClient
+
+        # Client construction is local (no network call), so a dummy key value
+        # is enough to prove the Agent picked the right adapter class.
+        with unittest.mock.patch.dict(os.environ, {"TEST_GEMINI_KEY": "dummy"}, clear=False):
+            agent = self._agent("gemini", api_key_variable="TEST_GEMINI_KEY")
+        self.assertIsInstance(agent._semantic_reranker.client, GeminiRerankClient)
+        agent.close()
+
+    def test_nvidia_provider_selects_nvidia_client_class(self) -> None:
+        from starter.llm.nvidia_client import NvidiaRerankClient
+
+        with unittest.mock.patch.dict(os.environ, {"TEST_NVIDIA_KEY": "dummy"}, clear=False):
+            agent = self._agent("nvidia", api_key_variable="TEST_NVIDIA_KEY")
+        self.assertIsInstance(agent._semantic_reranker.client, NvidiaRerankClient)
+        agent.close()
+
+    def test_missing_credentials_disable_nvidia_route_without_network(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("NVIDIA_API_KEY", None)
+            agent = self._agent("nvidia", api_key_variable="NVIDIA_API_KEY")
+        try:
+            agent.reset("session", {})
+            response = agent.respond("session", "shoe", 1, 10)
+        finally:
+            agent.close()
+        self.assertTrue(agent.semantic_rerank_status.startswith("disabled:"))
+        self.assertTrue(response["recommendations"])
+
+    def _agent(self, provider: str, *, api_key_variable: str) -> Agent:
+        return Agent(
+            self.catalog_path,
+            RetrievalConfig(
+                artifact_dir=Path(self.directory.name) / "missing-artifacts",
+                validate_artifact_checksums=False,
+            ),
+            PhaseThreeConfig(mode="rerank", fresh_candidate_limit=10),
+            PhaseFourConfig(mode="off"),
+            PhaseFiveConfig(mode="off"),
+            PhaseSixConfig(mode="rerank", provider=provider, api_key_variable=api_key_variable),
+        )
+
 
 class AgentSemanticRerankIntegrationTest(unittest.TestCase):
     def make_agent(self, directory: str, mode: str, client) -> Agent:

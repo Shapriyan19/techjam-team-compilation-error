@@ -107,6 +107,11 @@ class SessionState:
     # with pure non-clues ("no preference", "not quite right"), and if the opening
     # message never parsed into a slot there is otherwise nothing left to search.
     retained_query_text: str = ""
+    # Literal phrases the shopper has stated, accumulated across turns. Any one
+    # of them is usually generic ("Imported" matches ~1,185 products), but the
+    # conjunction is close to a fingerprint - measured over the public misses,
+    # the target was in the top-scoring group 41/41 times, median group size 23.
+    verbatim_fragments: tuple[str, ...] = ()
     last_patches: tuple[StatePatch, ...] = ()
     candidate_pool: CandidateEvidencePool = field(default_factory=CandidateEvidencePool)
     override_epoch: int = 0

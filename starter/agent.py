@@ -15,6 +15,7 @@ from starter.clarification_config import PhaseFourConfig
 from starter.llm.client import AnthropicRerankClient, RerankClient
 from starter.llm.config import PhaseSixConfig
 from starter.llm.gemini_client import GeminiRerankClient
+from starter.llm.nvidia_client import NvidiaRerankClient
 from starter.llm.rerank import SemanticReranker
 from starter.ranking.config import PhaseThreeConfig
 from starter.ranking.evidence import (
@@ -252,9 +253,10 @@ class Agent:
             return
         client = self._injected_rerank_client
         if client is None:
-            client_class = (
-                GeminiRerankClient if self.phase6_config.provider == "gemini" else AnthropicRerankClient
-            )
+            client_class = {
+                "gemini": GeminiRerankClient,
+                "nvidia": NvidiaRerankClient,
+            }.get(self.phase6_config.provider, AnthropicRerankClient)
             try:
                 client = client_class(self.phase6_config)
             except Exception as exc:
