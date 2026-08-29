@@ -10,7 +10,9 @@ from pathlib import Path
 from starter.agent import Agent
 from starter.clarification_config import PhaseFourConfig
 from starter.llm.client import RerankReply, RerankRequest
+from starter.llm.client import LLMUnavailable
 from starter.llm.config import PhaseSixConfig
+from starter.llm.nvidia_client import NvidiaRerankClient
 from starter.llm.rerank import SemanticReranker, _resolve_order
 from starter.ranking.config import PhaseThreeConfig
 from starter.ranking.features import CatalogFeatureStore, ScoredCandidate
@@ -192,6 +194,155 @@ class PhaseSixConfigTest(unittest.TestCase):
 
     def test_default_model_is_the_current_claude_opus(self) -> None:
         self.assertEqual(PhaseSixConfig().model, "claude-opus-5")
+
+    def test_nvidia_provider_supplies_its_own_defaults(self) -> None:
+        environment = {"TECHJAM_LLM_PROVIDER": "nvidia"}
+        with unittest.mock.patch.dict(os.environ, environment, clear=False):
+            for name in ("TECHJAM_LLM_MODEL", "TECHJAM_LLM_KEY_VARIABLE", "TECHJAM_LLM_BASE_URL"):
+                os.environ.pop(name, None)
+            config = PhaseSixConfig.from_environment()
+
+        self.assertEqual(config.provider, "nvidia")
+        self.assertEqual(config.model, "openai/gpt-oss-120b")
+        self.assertEqual(config.api_key_variable, "NVIDIA_API_KEY")
+        self.assertEqual(config.base_url, "https://integrate.api.nvidia.com/v1")
+
+    def test_unsupported_provider_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            PhaseSixConfig(provider="gemini")
+
+    def test_nvidia_provider_requires_a_base_url(self) -> None:
+        with self.assertRaises(ValueError):
+            PhaseSixConfig(provider="nvidia", base_url="")
+
+
+class _StubTransport:
+    """Stands in for the HTTP POST, so no test opens a socket."""
+
+    def __init__(self, *responses) -> None:
+        self.responses = list(responses)
+        self.payloads: list[dict] = []
+
+    def __call__(self, payload: dict) -> dict:
+        self.payloads.append(payload)
+        if not self.responses:
+            raise AssertionError("unexpected extra request")
+        outcome = self.responses.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _completion(content: str, prompt_tokens: int = 100, completion_tokens: int = 20) -> dict:
+    return {
+        "choices": [{"message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+    }
+
+
+class NvidiaRerankClientTest(unittest.TestCase):
+    config = PhaseSixConfig(
+        mode="rerank",
+        provider="nvidia",
+        model="openai/gpt-oss-120b",
+        api_key_variable="TECHJAM_TEST_NVIDIA_KEY",
+        base_url="https://integrate.api.nvidia.com/v1",
+    )
+    request = RerankRequest(system="rank these", user_message="1. Shoe\n2. Boot")
+
+    def make_client(self, transport, config: PhaseSixConfig | None = None) -> NvidiaRerankClient:
+        with unittest.mock.patch.dict(os.environ, {"TECHJAM_TEST_NVIDIA_KEY": "nvapi-test"}):
+            return NvidiaRerankClient(config or self.config, transport=transport)
+
+    def test_missing_key_is_unavailable_before_any_request(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TECHJAM_TEST_NVIDIA_KEY", None)
+            with self.assertRaises(LLMUnavailable):
+                NvidiaRerankClient(self.config, transport=_StubTransport())
+
+    def test_schema_request_returns_order_and_usage(self) -> None:
+        transport = _StubTransport(_completion('{"order": [2, 1]}'))
+        reply = self.make_client(transport).rerank(self.request)
+
+        self.assertEqual(reply.order, (2, 1))
+        self.assertEqual(reply.prompt_tokens, 100)
+        self.assertEqual(reply.completion_tokens, 20)
+        payload = transport.payloads[0]
+        self.assertEqual(payload["model"], "openai/gpt-oss-120b")
+        self.assertEqual(payload["response_format"]["type"], "json_schema")
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["temperature"], 0.0)
+        self.assertEqual(payload["messages"][0]["content"], "rank these")
+
+    def test_schema_rejection_falls_back_to_json_mode(self) -> None:
+        from starter.llm.nvidia_client import _ParameterRejected
+
+        transport = _StubTransport(
+            _ParameterRejected("response_format", "400"), _completion('{"order": [1, 2]}')
+        )
+        client = self.make_client(transport)
+
+        self.assertEqual(client.rerank(self.request).order, (1, 2))
+        self.assertEqual(transport.payloads[1]["response_format"], {"type": "json_object"})
+        self.assertIn("JSON object", transport.payloads[1]["messages"][0]["content"])
+        # The downgrade sticks, so the next call does not pay for another rejection.
+        transport.responses.append(_completion('{"order": [2, 1]}'))
+        client.rerank(self.request)
+        self.assertEqual(transport.payloads[2]["response_format"], {"type": "json_object"})
+
+    def test_rejected_reasoning_effort_is_dropped_and_the_schema_kept(self) -> None:
+        from starter.llm.nvidia_client import _ParameterRejected
+
+        transport = _StubTransport(
+            _ParameterRejected("reasoning_effort", "400: unknown field"),
+            _completion('{"order": [2, 1]}'),
+        )
+        client = self.make_client(transport)
+
+        self.assertEqual(client.rerank(self.request).order, (2, 1))
+        self.assertNotIn("reasoning_effort", transport.payloads[1])
+        self.assertEqual(transport.payloads[1]["response_format"]["type"], "json_schema")
+
+    def test_thinking_that_eats_the_token_budget_reports_the_cause(self) -> None:
+        truncated = {
+            "choices": [
+                {
+                    "message": {"content": "", "reasoning_content": "thinking " * 100},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"prompt_tokens": 3238, "completion_tokens": 2048},
+        }
+        with self.assertRaises(LLMUnavailable) as caught:
+            self.make_client(_StubTransport(truncated)).rerank(self.request)
+
+        self.assertIn("truncated", str(caught.exception))
+
+    def test_wrapped_json_is_parsed(self) -> None:
+        transport = _StubTransport(_completion('Here you go:\n```json\n{"order": [2, 1]}\n```'))
+
+        self.assertEqual(self.make_client(transport).rerank(self.request).order, (2, 1))
+
+    def test_transient_failure_is_retried_then_reported_as_unavailable(self) -> None:
+        from starter.llm.nvidia_client import _RetryableError
+
+        transport = _StubTransport(_RetryableError("HTTP 503"), _RetryableError("HTTP 503"))
+        client = self.make_client(transport)
+        with unittest.mock.patch("starter.llm.nvidia_client.time.sleep"):
+            with self.assertRaises(LLMUnavailable):
+                client.rerank(self.request)
+
+        self.assertEqual(len(transport.payloads), self.config.max_retries + 1)
+
+    def test_empty_content_is_unavailable(self) -> None:
+        transport = _StubTransport(_completion("   "))
+        with self.assertRaises(LLMUnavailable):
+            self.make_client(transport).rerank(self.request)
+
+    def test_refusal_is_unavailable(self) -> None:
+        transport = _StubTransport({"choices": [{"message": {"refusal": "no"}}], "usage": {}})
+        with self.assertRaises(LLMUnavailable):
+            self.make_client(transport).rerank(self.request)
 
 
 class AgentSemanticRerankIntegrationTest(unittest.TestCase):
