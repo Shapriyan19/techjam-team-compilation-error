@@ -51,12 +51,16 @@ The selected `P7-E009` runtime scores HR@10 `0.530000`, MRR `0.233736`, MTTC `6.
 The agent needs no credentials and makes no network call unless `TECHJAM_PHASE6_MODE` is set:
 
 ```bash
-python -m pip install []
+cp .env.example .env                  # then paste your key into NVIDIA_API_KEY
 TECHJAM_PHASE6_MODE=shadow python -m evaluator.local_evaluator   # price the calls only
 TECHJAM_PHASE6_MODE=rerank python -m evaluator.local_evaluator   # apply the ordering
 ```
 
-This route uses `claude-opus-5` over a 40-candidate shortlist, at most three calls per session, with a 12-second timeout and a deterministic fallback on every failure path. It has been tested against an injected fake client but **never run against a real model**, so no score is claimed for it.
+`.env` is gitignored and loaded automatically on `import starter`; it sets `TECHJAM_LLM_PROVIDER`,
+the API key, and any other override. A variable exported in the shell always wins over the file, and
+a missing `.env` is not an error - the default runtime needs no credential.
+
+This route uses `openai/gpt-oss-120b` on NVIDIA NIM's free hosted tier, called over the OpenAI-compatible endpoint with the standard library so no extra package is needed (set `TECHJAM_LLM_PROVIDER=anthropic` for `claude-opus-5` instead, which needs `python -m pip install anthropic` and `ANTHROPIC_API_KEY`), over a 40-candidate shortlist, at most three calls per session, with a 12-second timeout and a deterministic fallback on every failure path. It has been tested against an injected fake client but **never run against a real model**, so no score is claimed for it.
 
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
 The command writes per-session results and aggregate metrics to `results.json`.

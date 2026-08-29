@@ -8,5 +8,9 @@ numpy>=2.3.5,<3
 
 # Optional, Phase 6 only. The default agent never imports it, makes no network
 # call, and reports zero tokens. Install and set ANTHROPIC_API_KEY only when
-# running TECHJAM_PHASE6_MODE=shadow or rerank.
+# running TECHJAM_PHASE6_MODE=shadow or rerank against Anthropic.
 # anthropic>=0.116.0
+#
+# The NVIDIA provider (TECHJAM_LLM_PROVIDER=nvidia, free tier at
+# build.nvidia.com) needs no package at all: it calls the OpenAI-compatible
+# endpoint over stdlib HTTP. Export NVIDIA_API_KEY and nothing else.

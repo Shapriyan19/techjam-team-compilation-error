@@ -385,7 +385,8 @@ The official rules permit declared dependencies and lightweight local assets and
 | Information gain / facet coverage | `starter/clarification.py::InformationGainAnalyzer` | Implemented/tested as P4-E001; diagnostic layer retained |
 | Turn and question policy | `starter/clarification.py::ConservativeQuestionPolicy` | Implemented/tested as P4-E002; current default |
 | Top-K allocator | `starter/allocation.py` | Implemented/tested as `P5-E003`; rolled back from default |
-| LLM adapter / semantic reranker | `starter/llm/client.py`, `starter/llm/rerank.py` | Implemented/tested; off by default and never measured against a real model |
+| LLM adapter / semantic reranker | `starter/llm/client.py` (Anthropic), `starter/llm/nvidia_client.py` (NVIDIA NIM), `starter/llm/rerank.py` | Implemented/tested; off by default and never measured against a real model |
+| Local credentials and overrides | `starter/env_file.py`, `.env.example` | `.env` loaded on `import starter`; exported variables win |
 | Runtime modes, trace ring, cache size | `starter/runtime_config.py`, `starter/tracing.py` | Implemented in Phase 5; `trace` is the default |
 | Per-turn production trace | `Agent.last_trace()`, `Agent.trace_history()`, `Agent.runtime_stats()` | Implemented in Phase 5 |
 | Tiered fallbacks / Top-K contract guard | `starter/agent.py::_recommend`, `_degraded_recommendations`, `_unique_recommendations` | Implemented in Phase 5 |
@@ -546,15 +547,23 @@ decoded-feature cache; the cache trades `-17%` wall time for `+127 MiB` at `2000
 ### Run the optional Phase 6 LLM reranker
 
 ```bash
-python -m pip install []  
+cp .env.example .env                 # paste the key into NVIDIA_API_KEY; the file is gitignored
 TECHJAM_PHASE6_MODE=shadow python -m evaluator.local_evaluator --output artifacts/evaluation/p6_shadow.json
 TECHJAM_PHASE6_MODE=rerank python -m evaluator.local_evaluator --output artifacts/evaluation/p6_e001.json
 ```
 
 `shadow` prices the calls without changing the visible response; `rerank` applies the ordering.
-Other overrides: `TECHJAM_LLM_MODEL`, `TECHJAM_LLM_SHORTLIST`, `TECHJAM_LLM_MAX_CALLS`,
+`starter/env_file.py` loads `.env` into the environment on `import starter`, so credentials and
+overrides live in one gitignored file; an exported variable always wins over the file, `TECHJAM_ENV_FILE`
+points at a different path, and a missing file is not an error.
+`TECHJAM_LLM_PROVIDER` selects `anthropic` (default, needs the `anthropic` package and
+`ANTHROPIC_API_KEY`) or `nvidia` (OpenAI-compatible NIM endpoint over stdlib HTTP, needs only
+`NVIDIA_API_KEY`); each provider supplies its own default model, key variable, and base URL.
+Other overrides: `TECHJAM_LLM_MODEL`, `TECHJAM_LLM_BASE_URL`, `TECHJAM_LLM_KEY_VARIABLE`,
+`TECHJAM_LLM_SHORTLIST`, `TECHJAM_LLM_MAX_CALLS`,
 `TECHJAM_LLM_FIRST_TURN`, `TECHJAM_LLM_LAST_TURN`, `TECHJAM_LLM_TIMEOUT`,
-`TECHJAM_LLM_MAX_RETRIES`, `TECHJAM_LLM_MAX_TOKENS`, `TECHJAM_LLM_EFFORT`. With the mode unset the
+`TECHJAM_LLM_MAX_RETRIES`, `TECHJAM_LLM_MAX_TOKENS`, `TECHJAM_LLM_EFFORT`,
+`TECHJAM_LLM_MIN_INTERVAL` (seconds between calls, for the NVIDIA free tier's rate cap). With the mode unset the
 agent makes no network call, declares no credential, and reports zero tokens.
 
 ### Reproduce Phase 7 tuning
