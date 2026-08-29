@@ -36,7 +36,7 @@ class PhaseFourConfig:
     late_threshold: float = 0.72
     known_attribute_increment: float = 0.06
     buying_threshold_increment: float = 0.12
-    browsing_threshold_discount: float = 0.08
+    browsing_threshold_discount: float = 0.14  # P7-E004
     max_known_attributes: int = 4
     score_weights: QuestionScoreWeights = QuestionScoreWeights()
 
@@ -82,7 +82,7 @@ class PhaseFourConfig:
             late_threshold=_environment_float("TECHJAM_QUESTION_LATE_THRESHOLD", 0.72),
             known_attribute_increment=_environment_float("TECHJAM_QUESTION_KNOWN_INCREMENT", 0.06),
             buying_threshold_increment=_environment_float("TECHJAM_QUESTION_BUYING_INCREMENT", 0.12),
-            browsing_threshold_discount=_environment_float("TECHJAM_QUESTION_BROWSING_DISCOUNT", 0.08),
+            browsing_threshold_discount=_environment_float("TECHJAM_QUESTION_BROWSING_DISCOUNT", 0.14),
             max_known_attributes=_environment_int("TECHJAM_QUESTION_MAX_KNOWN", 4),
             score_weights=QuestionScoreWeights(
                 information_gain=_environment_float("TECHJAM_QUESTION_WEIGHT_IG", 0.20),
