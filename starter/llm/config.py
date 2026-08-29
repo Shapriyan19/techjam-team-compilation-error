@@ -5,18 +5,30 @@ from dataclasses import dataclass
 
 
 PHASE6_MODES = frozenset({"off", "shadow", "rerank"})
-PHASE6_PROVIDERS = frozenset({"anthropic", "gemini"})
+PHASE6_PROVIDERS = frozenset({"anthropic", "nvidia"})
 
 # Claude Opus 5 is the current default model. The reranking prompt is short and
 # highly structured, so the request runs at low effort with adaptive thinking.
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_MODEL_BY_PROVIDER = {
     "anthropic": "claude-opus-5",
-    "gemini": "gemini-2.5-flash",
+    # NVIDIA's free hosted tier (build.nvidia.com). Measured 2026-08-29 against
+    # the live endpoint: ~1.2 s per reranking call, honours json_schema guided
+    # decoding, and returns bare JSON with no reasoning preamble. Note that
+    # meta/llama-3.3-70b-instruct reached end of life on 2026-08-26 and now
+    # returns HTTP 410, and both deepseek-v4 models hang without responding.
+    "nvidia": "openai/gpt-oss-120b",
 }
 DEFAULT_KEY_VARIABLE_BY_PROVIDER = {
     "anthropic": "ANTHROPIC_API_KEY",
-    "gemini": "GEMINI_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
+}
+# OpenAI-compatible endpoint root. Point this at a self-hosted NIM to run the
+# same client against a local model; the Anthropic route uses its own SDK
+# default and ignores the field.
+DEFAULT_BASE_URL_BY_PROVIDER = {
+    "anthropic": "",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
 }
 
 
@@ -36,10 +48,11 @@ class PhaseSixConfig:
     max_output_tokens: int = 2048
     effort: str = "low"
     api_key_variable: str = "ANTHROPIC_API_KEY"
+    base_url: str = ""
     # Enforced minimum gap between calls, seconds. 0 = no pacing (Anthropic's
-    # tier handled our test volume fine). Gemini's free/low tier has a strict
-    # requests-per-minute cap and returned 429s on a burst of test calls; set
-    # this when running against a similarly limited Gemini project.
+    # tier handled our test volume fine). NVIDIA's free hosted tier has a strict
+    # requests-per-minute cap, so set this (e.g. 1.5) when a burst of evaluator
+    # sessions starts drawing 429s.
     min_request_interval_seconds: float = 0.0
 
     def __post_init__(self) -> None:
@@ -47,6 +60,8 @@ class PhaseSixConfig:
             raise ValueError(f"unsupported Phase 6 mode: {self.mode}")
         if self.provider not in PHASE6_PROVIDERS:
             raise ValueError(f"unsupported Phase 6 provider: {self.provider}")
+        if self.provider == "nvidia" and not self.base_url:
+            raise ValueError("the nvidia provider needs a base_url")
         if not 2 <= self.shortlist_size <= 100:
             raise ValueError("shortlist_size must be between 2 and 100")
         if self.max_calls_per_session < 1:
@@ -82,6 +97,7 @@ class PhaseSixConfig:
         provider = os.getenv("TECHJAM_LLM_PROVIDER", "anthropic").strip().casefold()
         default_model = DEFAULT_MODEL_BY_PROVIDER.get(provider, DEFAULT_MODEL)
         default_key_variable = DEFAULT_KEY_VARIABLE_BY_PROVIDER.get(provider, "ANTHROPIC_API_KEY")
+        default_base_url = DEFAULT_BASE_URL_BY_PROVIDER.get(provider, "")
         return cls(
             mode=os.getenv("TECHJAM_PHASE6_MODE", "off").strip().casefold(),
             provider=provider,
@@ -95,6 +111,7 @@ class PhaseSixConfig:
             max_output_tokens=_environment_int("TECHJAM_LLM_MAX_TOKENS", 2048),
             effort=os.getenv("TECHJAM_LLM_EFFORT", "low").strip().casefold(),
             api_key_variable=os.getenv("TECHJAM_LLM_KEY_VARIABLE", default_key_variable).strip(),
+            base_url=os.getenv("TECHJAM_LLM_BASE_URL", default_base_url).strip(),
             min_request_interval_seconds=_environment_float("TECHJAM_LLM_MIN_INTERVAL", 0.0),
         )
 

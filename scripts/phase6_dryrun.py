@@ -9,7 +9,8 @@ captured and summarized, which gives a cost estimate before any spend.
     python -m scripts.phase6_dryrun --exact-tokens   # uses free count_tokens API
 
 `--exact-tokens` needs ANTHROPIC_API_KEY but calls only the token-counting
-endpoint, which is not billed.
+endpoint, which is not billed. It is Anthropic-only; with the NVIDIA provider the
+character-based estimate is used instead.
 """
 
 from __future__ import annotations
@@ -26,11 +27,13 @@ from starter.llm.client import RerankReply, RerankRequest
 from starter.llm.config import PhaseSixConfig
 
 
-# Published Claude Opus 5 rates, USD per million tokens.
+# Published rates, USD per million tokens. NVIDIA's hosted NIM free tier bills
+# nothing, so its models price at zero.
 MODEL_RATES = {
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    "openai/gpt-oss-120b": (0.00, 0.00),
 }
 
 
@@ -109,13 +112,15 @@ def main() -> None:
     output_tokens = [_estimate_output_tokens(config.shortlist_size)] * len(requests)
     total_in = sum(prompt_tokens)
     total_out = sum(output_tokens)
-    in_rate, out_rate = MODEL_RATES.get(config.model, MODEL_RATES["claude-opus-5"])
+    default_rate = (0.00, 0.00) if config.provider == "nvidia" else MODEL_RATES["claude-opus-5"]
+    in_rate, out_rate = MODEL_RATES.get(config.model, default_rate)
     cost = total_in / 1e6 * in_rate + total_out / 1e6 * out_rate
 
     scale = len(LE.load_jsonl(args.dataset)) / len(samples)
 
     summary = {
         "model": config.model,
+        "provider": config.provider,
         "mode": config.mode,
         "sessions": len(samples),
         "requests": len(requests),
