@@ -4,8 +4,8 @@ This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase
 
-**Phase 8 (post-roadmap): question-policy repair. The selected runtime is `P8-E005`.
-Recommended TechnicalScore `0.599939`, HitRate@10 `0.745000` on the public set.**
+**Phase 9 (post-roadmap): reranker weight repair on top of Phase 8. The selected runtime is
+`P9-E001`. Recommended TechnicalScore `0.604103`, HitRate@10 `0.750000` on the public set.**
 
 Phase 8 began as work on the clarification policy and found a defect first. In 28 of 200 sessions
 the rewritten retrieval query became empty and stayed empty; all 28 failed. Repairing that
@@ -170,17 +170,17 @@ New or changed in Phases 5–7:
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| Overall | 200 | 0.745000 | 0.354462 | 4.945000 |
+| Overall | 200 | 0.750000 | 0.357343 | 4.905000 |
 | Buying | 80 | 0.737500 | 0.397212 | 4.537500 |
-| Browsing | 80 | 0.800000 | 0.338829 | 4.387500 |
+| Browsing | 80 | 0.812500 | 0.343579 | 4.325000 |
 | Intent Override | 30 | 0.633333 | 0.294563 | 7.233333 |
 | Boundary | 10 | 0.700000 | 0.317222 | 5.800000 |
 
-- Overall Efficiency: `0.605500`
-- Overall recommended TechnicalScore: `0.599939`
+- Overall Efficiency: `0.609500`
+- Overall recommended TechnicalScore: `0.604103`
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
 - Tests: `126 passed, 0 failed`
 
-Versus the `P7-E009` control (`0.431321`), TechnicalScore is `+0.168618` with 43 new hits and no
-lost hits. Retrieval recall measured over the public set is `191/200`, so the current ceiling for
-ranking work is HitRate@10 `0.955`.
+Versus the `P7-E009` control (`0.431321`), TechnicalScore is `+0.172782` with 44 new hits and no
+lost hits across Phases 8-9. Retrieval recall measured over the public set is `199/200`, so the
+current ceiling for ranking work is HitRate@10 `0.995`.

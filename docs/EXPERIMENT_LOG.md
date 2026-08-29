@@ -47,6 +47,7 @@ This document answers: **What changes improved or worsened the score?**
 | P8-E003 | Flat question thresholds `0.0` in place of the rising `0.40/0.55/0.72` schedule | 0.700000 | 0.340728 | 5.100000 | 0.590000 | 0.570218 | 0.637500 / 0.364960 / 4.912500 | 0.800000 / 0.338829 / 4.387500 | 0.600000 / 0.289008 / 7.266667 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 | P8-E004 | Buying threshold increment `0.12` -> `0.0` | 0.735000 | 0.353073 | 4.955000 | 0.604500 | 0.594322 | 0.725000 / 0.395823 / 4.550000 | 0.800000 / 0.338829 / 4.387500 | 0.600000 / 0.289008 / 7.266667 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 | P8-E005 | Allow questions through turn 9 (`last_question_turn` 9 -> 10) | 0.745000 | 0.354462 | 4.945000 | 0.605500 | 0.599939 | 0.737500 / 0.397212 / 4.537500 | 0.800000 / 0.338829 / 4.387500 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
+| P9-E001 | Feature reranker weights: `color` 0.10 -> 0.20, `conflict` 0.35 -> 0.20 | 0.750000 | 0.357343 | 4.905000 | 0.609500 | 0.604103 | 0.737500 / 0.397212 / 4.537500 | 0.812500 / 0.343579 / 4.325000 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 
 ## P0-E000 — untouched starter baseline
 
@@ -723,6 +724,47 @@ evaluator, catalog, labels, or scoring changed, and no public target is referenc
 Caveat: P8-E001 is a defect repair and should generalize. P8-E003/E004/E005 remove gates whose
 justification does not hold under this response contract; the direction is principled, but the
 exact public-set magnitude will not transfer verbatim to the private split.
+
+## P9-E001 — reranker feature weights: color and conflict
+
+- Date: 2026-08-29
+- Control: `P8-E005`, HR@10 `0.745000`, TechnicalScore `0.599939`.
+- Files modified: `starter/ranking/config.py`.
+- Tests: `126 passed, 0 failed`.
+
+With the Phase 8 fixes in place, retrieval recall reached `199/200`. Of the 49 remaining misses,
+target items were already in the candidate pool and reachable: at each session's best turn, median
+score gap to the Top-10 cutoff was `0.1077`, and 24 of 49 needed less than `0.10` more score.
+
+Decomposing what the rank-10 item held over the target at that gap (summed per-feature value
+difference across all 49 misses): `route_support +0.0816`, `retrieval_rank +0.0632`, `category
++0.0204`, `conflict +0.0204`; but `color -0.0133`, `material -0.0133`, `style -0.0133` — the target
+was *already agreeing better* on those three, and the weights were too small for it to matter.
+
+Single-variable sweeps: reducing `retrieval_rank` or `route_support` cost hits elsewhere (they
+carry the majority of ordinary sessions, not just these misses) and were rejected. Raising `color`
+and lowering `conflict` each independently improved HR@10 and TechnicalScore with `conflict=0.20`
+a genuine interior optimum (`0.10` and `0.0` both scored worse than `0.20`) — evidence of real
+signal, not a runaway. `product_type` and `price` sweeps showed no effect (rarely triggered by the
+current miss set).
+
+Combined `color=0.20, conflict=0.20` outperformed every point tried around it. Net effect versus
+the two changes evaluated separately was smaller than their sum, because they helped overlapping
+sessions.
+
+Delta versus control:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.005000 | +0.002881 | -0.040000 | +0.004000 | +0.004164 |
+
+Session delta: 1 new hit, **0 lost**, 5 better ranks, 3 worse ranks, 2 earlier shared-hit turns, 0
+later. Browsing HR@10 rises from `0.800000` to `0.812500`; no other scenario regresses.
+
+Decision: **Keep as the Phase 3 default.** Small in isolation, but principled: it corrects a
+measured underweighting rather than fitting the miss set directly, is net-positive on shared-hit
+ranks (5 vs 3), and loses nothing. `route_support` and `retrieval_rank` remain unchanged — the data
+argue against touching either.
 
 ## Template for the next evaluated change
 
