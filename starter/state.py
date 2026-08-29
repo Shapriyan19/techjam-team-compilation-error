@@ -103,6 +103,10 @@ class SessionState:
     last_asked_api_attribute: str | None = None
     override_history: list[OverrideRecord] = field(default_factory=list)
     rewritten_query: str = ""
+    # Last query that carried real content. The simulated customer often replies
+    # with pure non-clues ("no preference", "not quite right"), and if the opening
+    # message never parsed into a slot there is otherwise nothing left to search.
+    retained_query_text: str = ""
     last_patches: tuple[StatePatch, ...] = ()
     candidate_pool: CandidateEvidencePool = field(default_factory=CandidateEvidencePool)
     override_epoch: int = 0

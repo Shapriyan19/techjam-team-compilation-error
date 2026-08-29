@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from starter.agent import Agent
@@ -274,22 +276,27 @@ class AgentSemanticRerankIntegrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             catalog_path = Path(directory) / "catalog.jsonl"
             catalog_path.write_text(json.dumps(_product("A", "Shoe")) + "\n", encoding="utf-8")
-            agent = Agent(
-                catalog_path,
-                RetrievalConfig(
-                    artifact_dir=Path(directory) / "missing-artifacts",
-                    validate_artifact_checksums=False,
-                ),
-                PhaseThreeConfig(mode="rerank", fresh_candidate_limit=10),
-                PhaseFourConfig(mode="off"),
-                PhaseFiveConfig(mode="off"),
-                PhaseSixConfig(mode="rerank", api_key_variable="TECHJAM_ABSENT_KEY"),
-            )
-            try:
-                agent.reset("session", {})
-                response = agent.respond("session", "shoe", 1, 10)
-            finally:
-                agent.close()
+            # Point the OAuth profile lookup at an empty directory and drop the
+            # bearer token, so no credential source can resolve on any host.
+            environment = {"ANTHROPIC_CONFIG_DIR": str(Path(directory) / "empty-config")}
+            with unittest.mock.patch.dict(os.environ, environment, clear=False):
+                os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+                agent = Agent(
+                    catalog_path,
+                    RetrievalConfig(
+                        artifact_dir=Path(directory) / "missing-artifacts",
+                        validate_artifact_checksums=False,
+                    ),
+                    PhaseThreeConfig(mode="rerank", fresh_candidate_limit=10),
+                    PhaseFourConfig(mode="off"),
+                    PhaseFiveConfig(mode="off"),
+                    PhaseSixConfig(mode="rerank", api_key_variable="TECHJAM_ABSENT_KEY"),
+                )
+                try:
+                    agent.reset("session", {})
+                    response = agent.respond("session", "shoe", 1, 10)
+                finally:
+                    agent.close()
 
         self.assertTrue(agent.semantic_rerank_status.startswith("disabled:"))
         self.assertTrue(response["recommendations"])

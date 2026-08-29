@@ -25,7 +25,10 @@ class FeatureWeights:
     category: float = 0.18
     product_type: float = 0.14
     brand: float = 0.10
-    color: float = 0.10
+    # Color agreement was underweighted: on the misses that were close, the
+    # target usually agreed on color better than the item beating it, but the
+    # signal was too small to matter. See docs/EXPERIMENT_LOG.md P9-E001.
+    color: float = 0.20
     material: float = 0.10
     use_case: float = 0.08
     style: float = 0.06
@@ -35,7 +38,10 @@ class FeatureWeights:
     persistence: float = 0.05
     recency: float = 0.02
     rejection: float = 2.0
-    conflict: float = 0.35
+    # 0.35 punished a reliable hard-constraint conflict almost as hard as the
+    # rejection penalty scaled down, which was steeper than the data supports -
+    # a candidate with one conflicting field can still be a good answer.
+    conflict: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -79,7 +85,7 @@ class PhaseThreeConfig:
                 category=_environment_float("TECHJAM_FEATURE_CATEGORY", 0.18),
                 product_type=_environment_float("TECHJAM_FEATURE_PRODUCT_TYPE", 0.14),
                 brand=_environment_float("TECHJAM_FEATURE_BRAND", 0.10),
-                color=_environment_float("TECHJAM_FEATURE_COLOR", 0.10),
+                color=_environment_float("TECHJAM_FEATURE_COLOR", 0.20),
                 material=_environment_float("TECHJAM_FEATURE_MATERIAL", 0.10),
                 use_case=_environment_float("TECHJAM_FEATURE_USE_CASE", 0.08),
                 style=_environment_float("TECHJAM_FEATURE_STYLE", 0.06),
@@ -89,7 +95,7 @@ class PhaseThreeConfig:
                 persistence=_environment_float("TECHJAM_FEATURE_PERSISTENCE", 0.05),
                 recency=_environment_float("TECHJAM_FEATURE_RECENCY", 0.02),
                 rejection=_environment_float("TECHJAM_FEATURE_REJECTION", 2.0),
-                conflict=_environment_float("TECHJAM_FEATURE_CONFLICT", 0.35),
+                conflict=_environment_float("TECHJAM_FEATURE_CONFLICT", 0.20),
             ),
         )
 
