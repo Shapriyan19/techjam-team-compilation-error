@@ -51,8 +51,7 @@ The selected `P7-E009` runtime scores HR@10 `0.530000`, MRR `0.233736`, MTTC `6.
 The agent needs no credentials and makes no network call unless `TECHJAM_PHASE6_MODE` is set:
 
 ```bash
-python -m pip install anthropic
-export ANTHROPIC_API_KEY=...          # never commit this
+python -m pip install []
 TECHJAM_PHASE6_MODE=shadow python -m evaluator.local_evaluator   # price the calls only
 TECHJAM_PHASE6_MODE=rerank python -m evaluator.local_evaluator   # apply the ordering
 ```
