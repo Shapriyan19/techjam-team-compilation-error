@@ -4,82 +4,95 @@ This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase
 
-**Phase 4 — complete; `P4-E002` clarification policy kept, `P4-E001` retained as the byte-identical diagnostic control. Phase 5 has not started.**
+**Phases 5, 6, and 7 are complete. The selected runtime is `P7-E009`: P5-E002 deterministic
+retrieval plus the Phase 7 facet weight `0.95` and browsing question discount `0.14`.
+Recommended TechnicalScore `0.431321` on the public set.**
 
-Phase 4 added catalog-backed coverage/EIG analysis and a deterministic question policy as two isolated experiments. P4-E001 left P3-E002 byte-identical. P4-E002 added 22 hits, lost none, and raised TechnicalScore to `0.274689`; it is the default. Phase 1 state, P2-E005 lexical/facet retrieval, P3-E002 ranking, dense weight `0`, evaluator, catalog, labels, and official signatures remain unchanged.
+Phase 5 hardened the runtime: equivalence-preserving speedups (`-32.7%` wall time, byte-identical
+output), a per-turn production trace, and a nine-tier fallback ladder that always returns valid
+unique recommendations. It then fixed a genuine reproducibility defect — the facet Top-N cut
+depended on how a NumPy build partitions tied scores — and evaluated a Top-K hedge allocator,
+which was rolled back. Phase 6 added an optional Claude Opus 5 semantic reranker over a 30–50
+candidate shortlist; it is off by default, requires no credentials, and falls back
+deterministically. Phase 7 tuned one parameter at a time and deliberately declined the
+highest-scoring setting it found, because a diagnostic showed that setting was exploiting how the
+catalog file is ordered rather than retrieving better.
 
-The official evaluator, catalog, public labels, configuration, checksums, split logic, and scoring code remain unchanged.
+The official evaluator, catalog, public labels, scoring code, and split logic remain unchanged.
+
+## Evaluation host note
+
+Phases 5–7 ran on Python 3.14.6 with NumPy 2.4.6, because `numpy==2.3.5` has no wheel for
+Python 3.14. The unchanged Phase 4 code scores `0.269396` there rather than the `0.274689`
+recorded on the first host, and that gap is exactly the tie-ordering defect P5-E002 removes. All
+Phase 5–7 deltas are measured against the `0.269396` local control. After P5-E002 the facet route
+is NumPy-version independent, so this class of drift should not recur.
 
 ## Completed components
 
-- Verified official entrypoint: `starter.agent.Agent`.
-- Verified lifecycle: construct Agent, `reset(...)` once per session, then `respond(...)` for at most 10 turns.
-- Verified exact-ID Top-10 scoring and Intent Override gating.
-- Verified frozen catalog: 50,000 rows, 50,000 unique IDs, consistent schema.
-- Verified public set: 200 unique sessions/targets and the official 80/80/30/10 scenario mix.
-- Verified starter retrieval: latest-message-only weighted SQLite FTS5 BM25.
-- Passed all three untouched evaluator tests.
-- Reproduced the published baseline exactly.
-- Recorded repository navigation, commands, metrics, and experiment history.
-- Added `starter/state.py` for `SessionState`, slot values, patch operations, and dependency reset.
-- Added `starter/understanding.py` for deterministic parsing and query rewriting.
-- Made `starter.agent.Agent` stateful while keeping its BM25 `_search` behavior unchanged.
-- Added 12 Phase 1 tests covering the required examples plus dependency reset, negation, feature accumulation, rejection, and Agent integration.
-- Passed all 15 tests.
-- Evaluated `P1-E001`: three new hits, zero lost hits, and no shared-hit rank or turn regressions.
-- Verified dependency/offline policy: declared dependencies and local assets are allowed; network may be disabled; no explicit size limit is documented.
-- Added `catalog_random_indexing_v1`, trained only from frozen catalog text and requiring no downloaded model.
-- Built 50,000 normalized 96-dimensional float32 embeddings and exact row-ID mapping.
-- Added safe category/store/department/detail facet postings and coverage statistics.
-- Added configurable lexical, dense, facet, and scenario modes with weighted RRF.
-- Added checksum/shape/mapping validation and lexical fallback for all dense initialization/query failures.
-- Added 14 Phase 2 tests, bringing the total to 29; the newest test proves that dense is neither loaded nor queried at weight `0`.
-- Completed and analyzed all six Phase 2 sub-experiments separately.
-- Selected `P2-E005`: lexical Top-100 + facet Top-100, weights `1.0/0.55`, RRF `k=60`.
-- Rejected `P2-E006`: dense at weight `0.20` added no hits over P2-E005 and lost nine.
-- Added configurable Phase 3 `off`, `persistence`, and `rerank` modes.
-- Added per-session candidate evidence records, 1,000-ID pruning, transparent persistence scoring, explicit rejection resolution, and override epochs.
-- Added an offset-backed bounded catalog feature store and deterministic normalized additive scorer.
-- Added 26 Phase 3 tests, bringing the total to 55.
-- Evaluated P3-E001 separately: no new/lost hits, one better rank, two later hits, and TechnicalScore `-0.000162`; persistence rolled back.
-- Evaluated P3-E002 separately on P2-E005: 3 new hits, 2 lost hits, 4 better ranks, 1 worse rank, no turn regressions, and TechnicalScore `+0.002698`; reranker kept.
-- Added catalog-backed askable values, weighted coverage/entropy/EIG calculations, sparse-price bands, and full per-attribute traces.
-- Added independent Phase 4 `off`, `analyze`, and `ask` modes plus deterministic question templates and configurable turn-cost gates.
-- Added no-preference and API-alias suppression, recommendations alongside every question, and causal diagnostics without modifying the evaluator.
-- Added 22 Phase 4 tests, bringing the total to 77.
-- Evaluated P4-E001 separately: result byte-identical to P3-E002; diagnostic machinery kept.
-- Evaluated P4-E002 separately: 22 new hits, 0 lost hits, TechnicalScore `+0.091692`, and Browsing HR `0.10 -> 0.325`; policy kept.
+Phases 0–4 are unchanged and listed in `docs/EXPERIMENT_LOG.md`. Phases 5–7 added:
+
+- Replaced 60 regular-expression phrase searches per decoded product with one n-gram membership
+  test, verified equivalent over **all 50,000 catalog products with zero field mismatches** and
+  `4.17x` faster.
+- Memoized token singularization, removed double tokenization in slot agreement, hoisted the
+  scorer's weight resolution, and removed a per-attribute mapping rebuild in clarification.
+- Cut evaluator wall time from `152.84 s` to `102.85 s` with **byte-identical output**.
+- Added `TECHJAM_FEATURE_CACHE_SIZE`; measured `20000` at `-17%` wall time for `+127 MiB` peak RSS
+  and left the default at `5000`.
+- Added a nine-tier fallback ladder and a Top-K contract guard that always emits ordered, unique,
+  non-empty identifiers.
+- Made `respond(...)` self-heal a missing `reset(...)` instead of raising.
+- Added a per-turn production trace with route health, query, state patches, question decision,
+  fallback tier, degraded stages, and per-stage latency, asserted to contain no target or label.
+- Made the facet Top-N cut deterministic across NumPy builds, worth `+0.093593` locally.
+- Built and evaluated a deterministic Top-K hedge allocator; rolled it back after it lost 11 hits.
+- Added an optional Claude Opus 5 shortlist reranker with `off`/`shadow`/`rerank` modes, strict
+  timeouts, a session call budget, permutation-safe output validation, token accounting, and a
+  deterministic fallback on every failure path.
+- Added `scripts/compare_results.py` for session-level new/lost/rank/turn deltas.
+- Ran 13 Phase 7 tuning experiments, kept two parameters, and rejected the highest-scoring
+  configuration on evidence.
+- Grew the suite from 77 to **124 tests**.
 
 ## Next task
 
-**Phase 5: runtime hardening, trace/fallback validation, then one isolated Top-K allocation experiment.**
+Phases 0–7 of the original roadmap are complete. Recommended next work, in priority order:
 
-Recommended work, subject to approval:
-
-1. Freeze P4-E002 as the official control, including its question thresholds and unchanged P3 ranking.
-2. P5-E001: precompute or batch the compact clarification facets and add component latency/fallback traces; require byte-identical P4-E002 metrics and questions while reducing the roughly six-minute public run.
-3. Validate safe fallbacks for missing facet artifacts, feature metadata, and clarification analysis; every fallback must still return valid unique recommendations.
-4. Add a concise per-turn production trace containing route health, query, state patches, question decision, and fallback tier without target or label access.
-5. Only after runtime parity, P5-E002 may test one deterministic Top-K hedge/coverage allocator over the already reranked candidates. Keep it separate from caching/tracing and compare exact new/lost/rank/turn deltas.
-6. Preserve question + recommendations, no-preference handling, override recomputation, dense weight `0`, and persistence off.
-7. Continue excluding LLM reranking, RL, ProtoNet, and runtime multi-agent logic unless a later phase explicitly approves them.
-
-Do not implement Phase 5 until explicitly approved.
+1. Measure Phase 6. Set `ANTHROPIC_API_KEY` and run `TECHJAM_PHASE6_MODE=shadow` first to price
+   the calls, then `rerank` to score it. The route is implemented and tested but has never run
+   against a real model, so no claim is made about its effect.
+2. Re-validate the catalog-order dependency. If the organizer can confirm whether the private
+   catalog keeps the same row order, the facet weight and tie-break decisions can be revisited
+   with real information instead of a conservative assumption.
+3. Attack Intent Override, now the weakest scenario at HR@10 `0.400000` and MRR `0.133452`. The
+   override still clears candidate evidence conservatively and the reranker has no explicit notion
+   of a superseded constraint.
+4. Build a private-set-shaped regression suite. Every Phase 7 decision rests on 200 sessions,
+   where five hits move HitRate by `0.025`.
+5. Consider a principled facet tie-break — popularity or lexical agreement instead of row order —
+   which would decouple the retrieval gain from catalog assembly.
+6. Only then revisit the deferred stretch items: ProtoNet routing or dialogue-policy RL.
 
 ## Target architecture
 
-The final live system remains one official Python `Agent` with modular internals:
+The final live system is one official Python `Agent` with modular internals. Every stage is
+implemented; the two optional stages are off by default.
 
 ```text
 message -> clue parser -> session state -> query rewriter -> scenario routing
-        -> lexical/facet retrieval -> RRF (optional experimental dense route)
+        -> lexical/facet retrieval -> weighted RRF (optional experimental dense route)
         -> fresh candidates -> deterministic reranker (optional experimental persistence)
+        -> optional Claude Opus 5 shortlist reranker (off by default)
+        -> optional Top-K hedge allocator (off by default)
         -> catalog-backed coverage/EIG -> deterministic question/turn policy
-        -> optional later small-shortlist LLM reranker
-        -> Top-K allocator -> optional question + current recommendations
+        -> Top-K contract guard -> optional question + current recommendations
+        -> per-turn production trace
 ```
 
-Reusable facet, optional dense, and optional variant artifacts will be built offline from the frozen catalog. Full-catalog lexical + facet retrieval must still occur every turn. There will be no runtime multi-agent system or external vector database.
+Reusable facet and optional dense artifacts are built offline from the frozen catalog.
+Full-catalog lexical + facet retrieval still runs every turn. There is no runtime multi-agent
+system and no external vector database.
 
 ## Phase roadmap
 
@@ -89,87 +102,85 @@ Reusable facet, optional dense, and optional variant artifacts will be built off
 | 1 | Session state, slot patches, override, query rewrite | Complete |
 | 2 | BM25 + optional dense + facet retrieval + RRF | Complete; `P2-E005` lexical + facet kept |
 | 3 | Persistent evidence + deterministic reranking | Complete; reranker only kept |
-| 4 | Information gain + facet coverage + turn-aware question policy | Complete; P4-E002 kept |
-| 5 | Runtime hardening + tracing/fallbacks + isolated Top-K allocation | Next; awaiting approval |
-| 6 | Optional LLM semantic reranking on 30–50 candidates | Pending |
-| 7 | One-hypothesis-at-a-time parameter tuning | Pending |
-| Stretch | ProtoNet router or dialogue-policy RL, only after measured comparison | Deferred |
+| 4 | Information gain + facet coverage + turn-aware question policy | Complete; `P4-E002` kept |
+| 5 | Runtime hardening + tracing/fallbacks + isolated Top-K allocation | Complete; `P5-E001` and `P5-E002` kept, `P5-E003` rolled back |
+| 6 | Optional LLM semantic reranking on 30–50 candidates | Implemented and tested; **unmeasured**, off by default |
+| 7 | One-hypothesis-at-a-time parameter tuning | Complete; `P7-E009` selected |
+| Stretch | ProtoNet router or dialogue-policy RL | Deferred |
 
 ## Major architectural decisions
 
+Phase 0–4 decisions are unchanged. Phases 5–7 added:
+
 | Decision | Reason and metric link | Status |
 |---|---|---|
-| Preserve `starter.agent.Agent` as the official adapter | Required by the evaluator import contract and Technical Execution validity | Confirmed |
-| Keep one runtime Agent with ordinary Python modules | Meets the official interface and avoids orchestration latency/failure risk | Confirmed |
-| Store authoritative state in Python dataclasses | Makes updates, overrides, and tests deterministic | Implemented |
-| Use explicit `SET`/`UPDATE`/`REMOVE`/`RESET_DEPENDENTS` patches | Prevents implicit stale-state behavior and supports exact override tests | Implemented |
-| Keep hard/soft strength as state only in Phase 1 | Avoids premature sparse-metadata filtering while preparing Phase 2+ features | Implemented |
-| Serialize active state plus a sanitized current-message fallback | Carries prior structured clues without dropping unrecognized current wording | Implemented |
-| Use catalog-trained random indexing instead of a downloaded embedding model | Fully offline, deterministic, NumPy-only, and reproducible from frozen data | Implemented |
-| Pin NumPy to `2.3.5` | Cross-version dense tie ordering changed official metrics; exact pin restores reproducibility | Implemented |
-| Keep the original lexical route callable | Provides the exact `P2-E001` control and safe fallback | Implemented |
-| Use weighted RRF instead of raw-score averaging | Route scores are incomparable; rank fusion is stable and testable | Implemented |
-| Keep lexical + facet weights `1.0/0.55`, RRF `k=60` | `P2-E005` is the strongest simple retrieval setup and loses no Phase 1 hits | Implemented/frozen generator |
-| Disable current dense representation by default | P2-E006 at weight `0.20` adds 0 and loses 9 hits versus P2-E005 | Implemented; code retained |
-| Reject equal lexical+dense weights without facets | `P2-E002` lost 10 Phase 1 hits and materially damaged Buying | Rolled back |
-| Reject the tested scenario-aware policy | `P2-E004` fell below Phase 1 HR and TechnicalScore | Rolled back |
-| Reject persistent evidence as the default | P3-E001 adds no hits, delays two hits, and lowers TechnicalScore | Rolled back; code retained |
-| Keep deterministic feature reranking | P3-E002 has the best TechnicalScore and higher HR@10 | Implemented/default |
-| Return current recommendations whenever the schema permits | Earlier exact hits improve HR@10 and MTTC/Efficiency | Implemented |
-| Treat reliable hard constraints cautiously and soft preferences as ranking signals | P3 scorer keeps missing metadata neutral and soft mismatches eligible | Implemented |
-| Search all 50,000 products every turn | Prevents a closed candidate universe and preserves fresh recovery | Implemented |
-| Fuse routes by RRF instead of raw-score averaging | Lexical/facet scores are incomparable; rank fusion is stable and testable | Implemented |
-| Use deterministic reranking before any optional LLM | P3-E002 improves TechnicalScore/HR with no model or network dependency | Implemented |
-| Ask only when information gain, facet coverage, and turn cost justify it | P4-E002 adds 22 hits with none lost and improves TechnicalScore by `0.091692` | Implemented/default |
-| Keep recommendations on every question turn | Preserves current-turn conversion and obeys the official schema | Implemented |
-| Suppress asked/no-preference attributes and stop questions on turns 9–10 | Avoids repeated questions and respects Boundary replies | Implemented |
-| Keep distinct exact `parent_asin` candidates in Top-K | Exact target coverage matters more than cosmetic deduplication | Implemented |
-| Use profiles only as a small soft prior | Public/private users are disjoint; avoids brittle memorization and recall loss | Planned |
-
-The measured deviation from the earlier three-route proposal is deliberate: the current dense representation remains available for research but is not active in production ranking.
+| Optimize only where equivalence is proven, not assumed | The n-gram rewrite was checked against the old definition on all 50,000 products before it shipped | Implemented |
+| Keep the feature cache at `5000` entries | `20000` is `-17%` wall time but `+127 MiB`; the organizer may cap memory, so speed that costs memory is a documented knob | Implemented |
+| Never fail a turn: nine-tier fallback ladder | An exception used to cost the whole turn; every tier now returns valid unique recommendations | Implemented |
+| Break facet Top-N ties deterministically | The same code scored `0.269396` and `0.274689` on two hosts purely from NumPy tie partitioning; `P5-E002` removes the dependency and adds `+0.093593` locally | Implemented/default |
+| Do not rank by catalog row order | A reproducible tie-break is defensible; a row-index prior is tuning to how the catalog file was assembled | Rejected on principle |
+| Reject the Top-K hedge allocator | `P5-E003` improves 12 shared-hit ranks but loses 11 hits; HitRate carries `0.50` of the score against MRR's `0.30` | Rolled back; code retained |
+| Choose the facet weight from the tie-order-independent sweep | The artifact-free curve peaks at `0.95`; the artifact-amplified curve climbs to `2.50` and `0.494176` | Implemented at `0.95` |
+| Keep the browsing question discount at `0.14` | `P7-E004` adds five Browsing hits, loses none, and moves no rank | Implemented |
+| Keep the LLM reranker off by default | Official scoring may disable network access, and the route has never been measured | Implemented |
+| Never let model output invent, drop, or duplicate an identifier | Model output is coerced into a permutation of the shortlist before it can affect ranking | Implemented |
+| Use profiles only as a small soft prior | Public/private users are disjoint; avoids brittle memorization and recall loss | Still planned, not implemented |
 
 ## Known problems
 
-- Parsing is deliberately conservative and lexicon-based; unknown brands, categories, and arbitrary feature wording remain unstructured.
-- Only structured prior-turn clues persist into retrieval. Unrecognized old free text remains in history but is not replayed indefinitely.
-- Clause-level hard/soft detection is heuristic and does not resolve complex grammar.
-- The dependency graph is intentionally small: category/product type can reset size-related state, but richer catalog-aware dependencies are not modeled.
-- `product_type` is supported by the state schema but the current category parser writes obvious product language to `category`.
-- The selected policy asks 194 questions (`0.97` per session); 124 are Browsing and 21 are Buying. Private-set calibration risk remains.
-- The anonymized profile is stored in state but intentionally not used for ranking yet.
-- The kept lexical + facet setup gains 14 Phase 1 hits and loses none, but 7 shared-hit ranks are worse even though 11 are better.
-- Dense random indexing is catalog-trained and offline, but the official ablation shows that its 96-dimensional representation hurts ranking even at weight `0.20`.
-- The facet route uses only safe actual metadata; selected detail coverage is just `6.078%` and price coverage is `21.054%`.
-- Boundary initially resembles Browsing; the policy relies on explicit no-preference state rather than hidden scenario knowledge.
-- Dense results are sensitive enough to numerical tie ordering that NumPy is pinned exactly.
-- Retrieval artifacts total `30.85 MiB` and must be included or rebuilt during setup.
-- Persistence is implemented but inactive because P3-E001 lowered TechnicalScore and delayed two hits.
-- P3-E002 gains three hits but loses two Buying hits; broad/shared structured metadata can promote substitutes past a valid rank-7/rank-10 target.
-- Overall MRR falls by `0.002008` versus P2-E005; Intent Override HR improves but its MRR falls by `0.021296`.
-- The feature scorer plus Top-100 clarification analysis increases the public evaluator wall time to roughly six minutes locally; compact precomputed question facets are the first Phase 5 optimization target.
-- There is no Top-K hedge allocator or complete multi-tier production fallback system.
-- The FTS5 index is rebuilt in memory for every Agent process and is not cached.
-- Catalog metadata is sparse: 39,473 products have no price, 23,887 have no description, and 5,219 have no features.
-- Intent Override MRR falls slightly from `0.117593` to `0.112037`; one shared hit moves from rank 1 to rank 2, while one new Intent Override hit is added.
-- One Browsing shared hit is delayed by one turn, although its rank improves from 10 to 1.
-- Multi-material answers can populate the single material slot with one component; the full answer still survives in query rewriting.
-- There are 77 tests, but no catalog-scale parser recall benchmark or private-set retrieval regression suite.
-- `requirements.txt` pins NumPy `2.3.5`; the kept runtime still uses the facet artifact built by the same offline script.
-- There is no turn-level evidence trace yet; Phase 2 has only component-level latency measurements.
+Carried forward and still true: conservative lexicon-based parsing; only structured prior-turn
+clues persist; heuristic hard/soft detection; a deliberately small dependency graph;
+`product_type` written to `category` by the parser; sparse catalog metadata (39,473 products
+without price, 23,887 without description, 5,219 without features); a `30.85 MiB` artifact bundle;
+an FTS5 index rebuilt per process; persistence and dense both implemented but inactive; the
+profile stored but unused; multi-material answers populating one material slot.
+
+New or changed in Phases 5–7:
+
+- **The largest measured gain rides on catalog row order.** 146 of the 200 public targets are in
+  the first 1,000 of 50,000 catalog rows (median row `710`, mean `7,104` against a uniform
+  expectation of `25,000`). The deterministic tie-break resolves ties toward low row numbers, so
+  it systematically favors the region where targets live. With the old arbitrary tie order the
+  facet weight increase is worth about `+0.035`; with deterministic ties the same parameter keeps
+  climbing to `+0.13`. The `0.95` default is chosen from the artifact-free curve, but the reported
+  `0.431321` still includes the artifact.
+- If the organizer reorders the catalog for private scoring, the tie-break stays reproducible but
+  the extra score disappears. Nothing breaks; the number falls.
+- Phase 6 has never called a real model. Cost, latency, and any effect on ranking are unknown, and
+  the reported token usage of every scored run is `0 / 0 / 0`.
+- The Phase 6 session call budget is consumed by failed calls as well as successful ones, which is
+  deliberate but means a broken endpoint silently exhausts the budget for that session.
+- Phase 7 tuning rests on 200 public sessions where five hits move HitRate by `0.025`; several
+  accepted deltas are of that order.
+- The question policy now asks 222 questions (`1.11` per session), up from 194. Browsing accounts
+  for 152. Private-set calibration risk grew with it.
+- Intent Override is now clearly the weakest scenario (HR@10 `0.400000`, MRR `0.133452`,
+  MTTC `8.266667`) and Boundary MRR is low at `0.067222` on only 10 samples.
+- 24 shared-hit ranks are worse against the local control, against 21 better; the net gain comes
+  from 43 new hits.
+- Evaluator wall time rose from `102.85 s` to `136.75 s` after Phase 7. A micro-benchmark rules
+  out the deterministic tie-break as the cause (`0.613 ms` against `0.601 ms` per facet query);
+  the likely cause is a more varied candidate set lowering the feature-cache hit rate.
+- There is still no catalog-scale parser recall benchmark and no private-set regression suite.
+- `requirements.txt` pins `numpy==2.3.5`, which cannot be installed on Python 3.14; the runtime
+  works on NumPy 2.4.6 and, after P5-E002, should now agree across both.
 
 ## Current metrics
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| Overall | 200 | 0.325000 | 0.175629 | 8.025000 |
-| Buying | 80 | 0.362500 | 0.248140 | 7.412500 |
-| Browsing | 80 | 0.325000 | 0.142669 | 8.100000 |
-| Intent Override | 30 | 0.233333 | 0.112037 | 9.400000 |
-| Boundary | 10 | 0.300000 | 0.050000 | 8.200000 |
+| Overall | 200 | 0.530000 | 0.233736 | 6.190000 |
+| Buying | 80 | 0.537500 | 0.289752 | 5.687500 |
+| Browsing | 80 | 0.587500 | 0.236141 | 5.775000 |
+| Intent Override | 30 | 0.400000 | 0.133452 | 8.266667 |
+| Boundary | 10 | 0.400000 | 0.067222 | 7.300000 |
 
-- Overall Efficiency: `0.297500`
-- Overall recommended TechnicalScore: `0.274689`
+- Overall Efficiency: `0.481000`
+- Overall recommended TechnicalScore: `0.431321`
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
-- Tests: `77 passed, 0 failed` with pinned NumPy/artifacts
+- Tests: `124 passed, 0 failed`
+- Evaluator wall time: `136.75 s`
 
-Compared with P3-E002, HR@10 is `+0.110000`, MRR is `+0.060306`, MTTC is `-0.930000`, Efficiency is `+0.093000`, and TechnicalScore is `+0.091692`. Keep P4-E002 as the Phase 5 control while retaining P3-E002 (`TECHJAM_PHASE4_MODE=off`) as the ranking-only safety control.
+Against the local Phase 4 control (`0.269396`): HR@10 `+0.210000`, MRR `+0.061748`,
+MTTC `-1.920000`, Efficiency `+0.192000`, TechnicalScore `+0.161925`, from 43 new hits and 1 lost
+hit. Roughly `0.09` of that total is attributable to the catalog-order artifact described above.

@@ -5,6 +5,7 @@ import math
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Mapping
 
@@ -47,6 +48,14 @@ FIT_RE = re.compile(
     r"loose|standard)\s+(?:fit|width)\b",
     re.IGNORECASE,
 )
+# Longest controlled phrase, used to bound the n-gram window that replaces one
+# regular-expression pass per phrase. The phrase vocabularies are lowercase
+# alphanumeric words, so contiguous n-gram membership over the normalized corpus
+# is exactly equivalent to the previous boundary-anchored search.
+_PHRASE_VOCABULARIES = (KNOWN_USE_CASES, KNOWN_STYLES, KNOWN_OCCASIONS, KNOWN_FEATURES)
+_MAX_PHRASE_TOKENS = max(
+    len(phrase.split()) for vocabulary in _PHRASE_VOCABULARIES for phrase in vocabulary
+)
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,10 @@ class CatalogFeatureStore:
         self.cache_size = max(1, int(cache_size))
         self._offsets: dict[str, tuple[int, int]] = {}
         self._cache: OrderedDict[str, ProductFeatures] = OrderedDict()
+        self._descriptions: OrderedDict[str, dict] = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.unknown_lookups = 0
         with self.catalog_path.open("rb") as handle:
             while True:
                 offset = handle.tell()
@@ -105,18 +118,29 @@ class CatalogFeatureStore:
     def close(self) -> None:
         self._handle.close()
 
+    def cache_statistics(self) -> dict:
+        lookups = self.cache_hits + self.cache_misses
+        return {
+            "cache_size": self.cache_size,
+            "cached_products": len(self._cache),
+            "hits": self.cache_hits,
+            "misses": self.cache_misses,
+            "unknown_lookups": self.unknown_lookups,
+            "hit_rate": round(self.cache_hits / lookups, 6) if lookups else None,
+        }
+
     def get(self, identifier: str) -> ProductFeatures | None:
         identifier = str(identifier)
         cached = self._cache.pop(identifier, None)
         if cached is not None:
             self._cache[identifier] = cached
+            self.cache_hits += 1
             return cached
-        location = self._offsets.get(identifier)
-        if location is None:
+        product = self._read(identifier)
+        if product is None:
+            self.unknown_lookups += 1
             return None
-        offset, length = location
-        self._handle.seek(offset)
-        product = json.loads(self._handle.read(length))
+        self.cache_misses += 1
         features = _product_features(product)
         self._cache[identifier] = features
         if len(self._cache) > self.cache_size:
@@ -124,10 +148,44 @@ class CatalogFeatureStore:
         return features
 
 
+    def describe(self, identifier: str) -> dict | None:
+        """Compact catalog record for optional prompt construction."""
+        identifier = str(identifier)
+        cached = self._descriptions.pop(identifier, None)
+        if cached is not None:
+            self._descriptions[identifier] = cached
+            return cached
+        product = self._read(identifier)
+        if product is None:
+            return None
+        categories = _category_values(product.get("categories"))
+        description = {
+            "parent_asin": identifier,
+            "title": _compact(_text(product.get("title")), 140),
+            "store": _compact(_text(product.get("store")), 40),
+            "category": categories[-1] if categories else "",
+            "price": _price(product.get("price")),
+            "features": _compact(_text(product.get("features")), 160),
+        }
+        self._descriptions[identifier] = description
+        if len(self._descriptions) > min(self.cache_size, 2000):
+            self._descriptions.popitem(last=False)
+        return description
+
+    def _read(self, identifier: str) -> dict | None:
+        location = self._offsets.get(identifier)
+        if location is None:
+            return None
+        offset, length = location
+        self._handle.seek(offset)
+        return json.loads(self._handle.read(length))
+
+
 class DeterministicFeatureScorer:
     def __init__(self, store: CatalogFeatureStore, weights: FeatureWeights) -> None:
         self.store = store
         self.weights = weights
+        self._weighted_items = _weighted_items(weights)
 
     def rank(
         self,
@@ -141,7 +199,7 @@ class DeterministicFeatureScorer:
             if product is None:
                 continue
             feature_values = self._feature_values(candidate, product, state, evidence)
-            total = sum(feature_values[name] * weight for name, weight in _weighted_items(self.weights))
+            total = sum(feature_values[name] * weight for name, weight in self._weighted_items)
             scored.append(
                 ScoredCandidate(
                     parent_asin=candidate.parent_asin,
@@ -245,7 +303,8 @@ def _slot_agreement(
     if slot is None:
         return 0.0, 0.0
     values = slot.value if isinstance(slot.value, tuple) else (slot.value,)
-    matches = [bool(_tokens(value) and _tokens(value).issubset(searchable_terms)) for value in values]
+    value_terms = [_tokens(value) for value in values]
+    matches = [bool(terms and terms.issubset(searchable_terms)) for terms in value_terms]
     if any(matches):
         strength = 1.0 if slot.strength == ConstraintStrength.HARD else 0.65
         return strength * (sum(matches) / len(matches)), 0.0
@@ -287,7 +346,7 @@ def _product_features(product: dict) -> ProductFeatures:
     detail_text = _text(details)
     store = _text(product.get("store"))
     corpus = " ".join((title, categories, features, description, detail_text, store))
-    normalized_corpus = _normalize_phrase(corpus)
+    corpus_ngrams = _corpus_ngrams(_normalize_phrase(corpus))
     all_terms = _tokens(corpus)
     brand_detail = " ".join(
         str(value)
@@ -316,11 +375,11 @@ def _product_features(product: dict) -> ProductFeatures:
         category_values=category_values,
         product_type_values=product_type_values,
         brand_values=brand_values,
-        use_case_values=_phrases_present(normalized_corpus, KNOWN_USE_CASES),
+        use_case_values=_phrases_present(corpus_ngrams, KNOWN_USE_CASES),
         size_fit_values=tuple(dict.fromkeys(_normalize_phrase(value) for value in FIT_RE.findall(corpus))),
-        style_values=_phrases_present(normalized_corpus, KNOWN_STYLES),
-        occasion_values=_phrases_present(normalized_corpus, KNOWN_OCCASIONS),
-        feature_values=_phrases_present(normalized_corpus, KNOWN_FEATURES),
+        style_values=_phrases_present(corpus_ngrams, KNOWN_STYLES),
+        occasion_values=_phrases_present(corpus_ngrams, KNOWN_OCCASIONS),
+        feature_values=_phrases_present(corpus_ngrams, KNOWN_FEATURES),
     )
 
 
@@ -342,13 +401,24 @@ def _brand_values(store: str, brand_detail: str) -> tuple[str, ...]:
     return (value,)
 
 
-def _phrases_present(corpus: str, phrases: tuple[str, ...]) -> tuple[str, ...]:
-    present = [
-        phrase
-        for phrase in phrases
-        if re.search(r"(?<![a-z0-9])" + re.escape(phrase).replace(r"\ ", r"\s+") + r"(?![a-z0-9])", corpus)
-    ]
-    return tuple(present)
+def _corpus_ngrams(corpus: str) -> frozenset[str]:
+    tokens = corpus.split()
+    grams = set(tokens)
+    for size in range(2, _MAX_PHRASE_TOKENS + 1):
+        grams.update(
+            " ".join(tokens[start:start + size])
+            for start in range(len(tokens) - size + 1)
+        )
+    return frozenset(grams)
+
+
+def _phrases_present(ngrams: frozenset[str], phrases: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(phrase for phrase in phrases if phrase in ngrams)
+
+
+def _compact(value: str, limit: int) -> str:
+    text = " ".join(str(value).split())
+    return text[:limit].rstrip()
 
 
 def _normalize_phrase(value: object) -> str:
@@ -359,6 +429,7 @@ def _tokens(value: object) -> frozenset[str]:
     return frozenset(_singular(token.casefold()) for token in TOKEN_RE.findall(str(value)))
 
 
+@lru_cache(maxsize=131072)
 def _singular(token: str) -> str:
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"

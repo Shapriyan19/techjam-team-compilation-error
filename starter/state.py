@@ -113,6 +113,10 @@ class SessionState:
     phase4_turn_history: list[dict] = field(default_factory=list)
     repeated_questions_prevented: int = 0
     no_preference_responses_respected: int = 0
+    llm_call_count: int = 0
+    llm_prompt_tokens: int = 0
+    llm_completion_tokens: int = 0
+    llm_status_history: list[str] = field(default_factory=list)
 
     def observe_message(self, turn: int, message: str) -> None:
         if turn < 1:
@@ -288,6 +292,10 @@ class SessionState:
             "phase4_turn_count": len(self.phase4_turn_history),
             "repeated_questions_prevented": self.repeated_questions_prevented,
             "no_preference_responses_respected": self.no_preference_responses_respected,
+            "llm_call_count": self.llm_call_count,
+            "llm_prompt_tokens": self.llm_prompt_tokens,
+            "llm_completion_tokens": self.llm_completion_tokens,
+            "llm_status_history": list(self.llm_status_history),
         }
 
 

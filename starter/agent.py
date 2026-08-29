@@ -6,11 +6,15 @@ import sqlite3
 import time
 from pathlib import Path
 
+from starter.allocation import TopKAllocator
 from starter.clarification import (
     ConservativeQuestionPolicy,
     InformationGainAnalyzer,
 )
 from starter.clarification_config import PhaseFourConfig
+from starter.llm.client import AnthropicRerankClient, RerankClient
+from starter.llm.config import PhaseSixConfig
+from starter.llm.rerank import SemanticReranker
 from starter.ranking.config import PhaseThreeConfig
 from starter.ranking.evidence import (
     CandidateEvidencePool,
@@ -22,7 +26,9 @@ from starter.retrieval.config import RetrievalConfig
 from starter.retrieval.dense import DenseRetriever
 from starter.retrieval.facets import FacetRetriever
 from starter.retrieval.rrf import weighted_rrf_details
+from starter.runtime_config import PhaseFiveConfig
 from starter.state import SessionState
+from starter.tracing import FALLBACK_TIERS, RuntimeTracer, TurnTrace
 from starter.understanding import rewrite_query, update_state_from_message
 
 
@@ -52,6 +58,31 @@ def _terms(text: str) -> list[str]:
     ]
 
 
+def _elapsed_ms(started: float) -> float:
+    return 1000.0 * (time.perf_counter() - started)
+
+
+def _worst_tier(current: str, candidate: str) -> str:
+    """Keep the most degraded tier observed while answering one turn."""
+    order = {name: index for index, name in enumerate(FALLBACK_TIERS)}
+    return max((current, candidate), key=lambda name: order.get(name, 0))
+
+
+def _unique_recommendations(items: list[dict], top_k: int) -> list[dict]:
+    """Guarantee the official contract: ordered, unique, non-empty identifiers."""
+    result: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        identifier = str(item.get("parent_asin", "")).strip()
+        if not identifier or identifier in seen:
+            continue
+        seen.add(identifier)
+        result.append({"parent_asin": identifier})
+        if len(result) >= top_k:
+            break
+    return result
+
+
 class Agent:
     """Stateful deterministic agent using the starter BM25 retrieval path."""
 
@@ -61,12 +92,18 @@ class Agent:
         retrieval_config: RetrievalConfig | None = None,
         phase3_config: PhaseThreeConfig | None = None,
         phase4_config: PhaseFourConfig | None = None,
+        phase5_config: PhaseFiveConfig | None = None,
+        phase6_config: PhaseSixConfig | None = None,
+        rerank_client: RerankClient | None = None,
     ) -> None:
         started = time.perf_counter()
         self.catalog_path = Path(catalog_path)
         self.retrieval_config = retrieval_config or RetrievalConfig.from_environment()
         self.phase3_config = phase3_config or PhaseThreeConfig.from_environment()
         self.phase4_config = phase4_config or PhaseFourConfig.from_environment()
+        self.phase5_config = phase5_config or PhaseFiveConfig.from_environment()
+        self.phase6_config = phase6_config or PhaseSixConfig.from_environment()
+        self._injected_rerank_client = rerank_client
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._dense_retriever: DenseRetriever | None = None
@@ -75,14 +112,25 @@ class Agent:
         self._feature_scorer: DeterministicFeatureScorer | None = None
         self._question_analyzer: InformationGainAnalyzer | None = None
         self._question_policy = ConservativeQuestionPolicy(self.phase4_config)
+        self._allocator: TopKAllocator | None = None
+        self._semantic_reranker: SemanticReranker | None = None
+        self.tracer = RuntimeTracer(
+            history_limit=self.phase5_config.trace_history_limit,
+            enabled=self.phase5_config.records_traces,
+        )
         self.dense_status = "disabled"
         self.facet_status = "disabled"
         self.feature_scorer_status = "disabled"
         self.clarification_status = "disabled"
+        self.allocation_status = "disabled"
+        self.semantic_rerank_status = "disabled"
+        self.semantic_rerank_seconds = 0.0
         self._build_index()
         self._load_optional_retrievers()
         self._load_optional_feature_scorer()
         self._load_optional_clarification()
+        self._load_optional_allocator()
+        self._load_optional_semantic_reranker()
         self.startup_seconds = time.perf_counter() - started
 
     def _build_index(self) -> None:
@@ -152,6 +200,7 @@ class Agent:
                     self.retrieval_config.artifact_dir,
                     self.catalog_path,
                     validate_checksums=self.retrieval_config.validate_artifact_checksums,
+                    deterministic_ties=self.retrieval_config.deterministic_facet_ties,
                 )
                 self.facet_status = "ready"
             except Exception as exc:
@@ -161,7 +210,10 @@ class Agent:
         if not self.phase3_config.uses_reranker:
             return
         try:
-            self._feature_store = CatalogFeatureStore(self.catalog_path)
+            self._feature_store = CatalogFeatureStore(
+                self.catalog_path,
+                cache_size=self.phase5_config.feature_cache_size,
+            )
             self._feature_scorer = DeterministicFeatureScorer(
                 self._feature_store,
                 self.phase3_config.feature_weights,
@@ -181,6 +233,35 @@ class Agent:
             self.phase4_config,
         )
         self.clarification_status = "ready"
+
+    def _load_optional_allocator(self) -> None:
+        if not self.phase5_config.allocates_top_k:
+            return
+        if self._feature_store is None:
+            self.allocation_status = "disabled: feature store unavailable"
+            return
+        self._allocator = TopKAllocator(self._feature_store, self.phase5_config.allocation)
+        self.allocation_status = "ready"
+
+    def _load_optional_semantic_reranker(self) -> None:
+        if not self.phase6_config.calls_model:
+            return
+        if self._feature_store is None:
+            self.semantic_rerank_status = "disabled: feature store unavailable"
+            return
+        client = self._injected_rerank_client
+        if client is None:
+            try:
+                client = AnthropicRerankClient(self.phase6_config)
+            except Exception as exc:
+                self.semantic_rerank_status = f"disabled: {type(exc).__name__}: {exc}"
+                return
+        self._semantic_reranker = SemanticReranker(
+            self._feature_store,
+            self.phase6_config,
+            client,
+        )
+        self.semantic_rerank_status = "ready"
 
     def _lexical_search(self, query: str, top_k: int) -> list[dict]:
         unique_terms = list(dict.fromkeys(_terms(query)))[:40]
@@ -314,12 +395,8 @@ class Agent:
             if not record.rejected and not record.contradicted
         ][:top_k]
 
-    def _reranked_search(
-        self,
-        query: str,
-        top_k: int,
-        state: SessionState,
-    ) -> list[dict]:
+    def _reranked_candidates(self, query: str, state: SessionState) -> list[ScoredCandidate]:
+        """Full ordered reranked candidate list, before any Top-K truncation."""
         fresh = self._fresh_retrieval(
             query,
             self.phase3_config.fresh_candidate_limit,
@@ -331,8 +408,13 @@ class Agent:
                 for candidate in fresh
             )
             return [
-                {"parent_asin": candidate.parent_asin}
-                for candidate in fresh[:top_k]
+                ScoredCandidate(
+                    parent_asin=candidate.parent_asin,
+                    score=candidate.fused_score,
+                    fresh_rank=candidate.fused_rank,
+                    features=(),
+                )
+                for candidate in fresh
             ]
         ranked = self._feature_scorer.rank(fresh, state)
         state.last_candidate_scores = tuple(
@@ -340,23 +422,61 @@ class Agent:
             for candidate in ranked
         )
         return [
-            {"parent_asin": candidate.parent_asin}
+            candidate
             for candidate in ranked
             if candidate.parent_asin not in state.rejected_product_ids
-        ][:top_k]
+        ]
+
+    def _reranked_search(
+        self,
+        query: str,
+        top_k: int,
+        state: SessionState,
+    ) -> list[dict]:
+        return [
+            {"parent_asin": candidate.parent_asin}
+            for candidate in self._reranked_candidates(query, state)[:top_k]
+        ]
+
+    def route_health(self) -> dict:
+        return {
+            "lexical": "ready",
+            "dense": self.dense_status,
+            "facet": self.facet_status,
+            "reranker": self.feature_scorer_status,
+            "clarification": self.clarification_status,
+            "allocation": self.allocation_status,
+            "semantic_rerank": self.semantic_rerank_status,
+        }
+
+    def last_trace(self) -> dict | None:
+        trace = self.tracer.last
+        return None if trace is None else trace.to_dict()
+
+    def trace_history(self) -> list[dict]:
+        return [trace.to_dict() for trace in self.tracer]
 
     def runtime_stats(self) -> dict:
         return {
             "retrieval_mode": self.retrieval_config.mode,
             "phase3_mode": self.phase3_config.mode,
             "phase4_mode": self.phase4_config.mode,
+            "phase5_mode": self.phase5_config.mode,
+            "phase6_mode": self.phase6_config.mode,
             "question_candidate_k": self.phase4_config.question_candidate_k,
             "active_pool_size": self.phase3_config.active_pool_size,
             "feature_scorer_status": self.feature_scorer_status,
             "clarification_status": self.clarification_status,
+            "allocation_status": self.allocation_status,
+            "semantic_rerank_status": self.semantic_rerank_status,
+            "llm_model": self.phase6_config.model if self.phase6_config.calls_model else None,
             "startup_seconds": self.startup_seconds,
             "dense_status": self.dense_status,
             "facet_status": self.facet_status,
+            "feature_cache": (
+                None if self._feature_store is None else self._feature_store.cache_statistics()
+            ),
+            "runtime_health": self.tracer.summary(),
             "dense_average_query_ms": (
                 self._dense_retriever.average_query_latency_ms
                 if self._dense_retriever is not None else None
@@ -374,29 +494,231 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        state = self.session_state(session_id)
-        parsed = update_state_from_message(state, user_message, turn)
-        query = rewrite_query(state)
-        state.rejected_product_ids.update(
-            explicit_rejected_ids(user_message, state.last_recommendations)
+        started = time.perf_counter()
+        stage_milliseconds: dict[str, float] = {}
+        degraded: list[str] = []
+        usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        state = self._session_for_response(session_id)
+        parsed, query = self._understand(
+            state, user_message, turn, stage_milliseconds, degraded
         )
-        if self.phase3_config.uses_persistence:
-            recommendations = self._persistent_search(
-                query,
-                top_k,
-                state,
-                is_override=parsed.is_override,
-                user_message=user_message,
-            )
-        elif self.phase3_config.uses_reranker:
-            recommendations = self._reranked_search(query, top_k, state)
-        else:
-            recommendations = self._search(query, top_k, state)
+        recommendations, tier = self._recommend(
+            query, top_k, state, parsed, user_message, stage_milliseconds, degraded, usage
+        )
         state.last_recommendations = tuple(
             str(item["parent_asin"])
             for item in recommendations
             if item.get("parent_asin")
         )
+        clarify_started = time.perf_counter()
+        try:
+            message, internal_ask_attribute, ask_attribute, decision_reason, question_score, question_threshold = (
+                self._clarify(state)
+            )
+        except Exception as exc:
+            degraded.append("clarification")
+            tier = _worst_tier(tier, "clarification_fallback")
+            message = "Here are the closest matches I found."
+            internal_ask_attribute = None
+            ask_attribute = None
+            decision_reason = f"clarification fallback: {type(exc).__name__}"
+            question_score = None
+            question_threshold = None
+        stage_milliseconds["clarification"] = _elapsed_ms(clarify_started)
+        state.record_asked_attribute(internal_ask_attribute, ask_attribute)
+        state.phase4_turn_history.append({
+            "turn": state.turn,
+            "user_message": user_message,
+            "rewritten_query": query,
+            "ask_attribute": internal_ask_attribute,
+            "api_attribute": ask_attribute,
+            "question_score": question_score,
+            "question_threshold": question_threshold,
+            "decision_reason": decision_reason,
+            "recommendations": list(state.last_recommendations),
+            "slots": {
+                name: (
+                    list(slot.value) if isinstance(slot.value, tuple) else slot.value
+                )
+                for name, slot in state.slots.items()
+            },
+        })
+        stage_milliseconds["total"] = _elapsed_ms(started)
+        self._record_trace(
+            state=state,
+            tier=tier,
+            query=query,
+            parsed=parsed,
+            ask_attribute=ask_attribute,
+            decision_reason=decision_reason,
+            recommendation_count=len(recommendations),
+            stage_milliseconds=stage_milliseconds,
+            degraded=degraded,
+        )
+        return {
+            "message": message,
+            "ask_attribute": ask_attribute,
+            "recommendations": recommendations,
+            "usage": usage,
+        }
+
+    def _session_for_response(self, session_id: str) -> SessionState:
+        """Never fail a turn because the harness skipped or lost ``reset``."""
+        try:
+            return self.session_state(session_id)
+        except RuntimeError:
+            self.reset(session_id, {})
+            return self.session_state(session_id)
+
+    def _understand(
+        self,
+        state: SessionState,
+        user_message: str,
+        turn: int,
+        stage_milliseconds: dict[str, float],
+        degraded: list[str],
+    ) -> tuple[object | None, str]:
+        started = time.perf_counter()
+        parsed: object | None = None
+        try:
+            parsed = update_state_from_message(state, user_message, turn)
+            query = rewrite_query(state)
+        except Exception:
+            degraded.append("understanding")
+            query = " ".join(str(user_message).split())[:1000]
+        stage_milliseconds["understanding"] = _elapsed_ms(started)
+        return parsed, query
+
+    def _recommend(
+        self,
+        query: str,
+        top_k: int,
+        state: SessionState,
+        parsed: object | None,
+        user_message: str,
+        stage_milliseconds: dict[str, float],
+        degraded: list[str],
+        usage: dict[str, int],
+    ) -> tuple[list[dict], str]:
+        started = time.perf_counter()
+        tier = "full"
+        if "understanding" in degraded:
+            tier = "understanding_fallback"
+        recommendations: list[dict] = []
+        try:
+            state.rejected_product_ids.update(
+                explicit_rejected_ids(user_message, state.last_recommendations)
+            )
+            if self.phase3_config.uses_persistence:
+                recommendations = self._persistent_search(
+                    query,
+                    top_k,
+                    state,
+                    is_override=bool(getattr(parsed, "is_override", False)),
+                    user_message=user_message,
+                )
+            elif self.phase3_config.uses_reranker:
+                candidates = self._reranked_candidates(query, state)
+                candidates, tier = self._semantic_rerank(
+                    candidates, state, tier, degraded, usage
+                )
+                recommendations, tier = self._allocate(candidates, top_k, tier, degraded)
+            else:
+                recommendations = self._search(query, top_k, state)
+        except Exception:
+            degraded.append("ranking")
+            recommendations, tier = self._degraded_recommendations(query, top_k, state)
+        recommendations = _unique_recommendations(recommendations, top_k)
+        if not recommendations:
+            recovered = _unique_recommendations(
+                [{"parent_asin": identifier} for identifier in state.last_recommendations],
+                top_k,
+            )
+            if recovered:
+                degraded.append("empty_ranking")
+                recommendations = recovered
+                tier = "previous_recommendations"
+            else:
+                tier = _worst_tier(tier, "empty")
+        stage_milliseconds["retrieval_ranking"] = _elapsed_ms(started)
+        return recommendations, tier
+
+    def _semantic_rerank(
+        self,
+        candidates: list[ScoredCandidate],
+        state: SessionState,
+        tier: str,
+        degraded: list[str],
+        usage: dict[str, int],
+    ) -> tuple[list[ScoredCandidate], str]:
+        if self._semantic_reranker is None or not candidates:
+            return candidates, tier
+        started = time.perf_counter()
+        try:
+            result = self._semantic_reranker.rerank(candidates, state)
+        except Exception as exc:
+            degraded.append("semantic_rerank")
+            state.llm_status_history.append(f"error: {type(exc).__name__}")
+            return candidates, _worst_tier(tier, "semantic_rerank_fallback")
+        state.llm_status_history.append(result.status)
+        state.llm_prompt_tokens += result.prompt_tokens
+        state.llm_completion_tokens += result.completion_tokens
+        usage["prompt_tokens"] += result.prompt_tokens
+        usage["completion_tokens"] += result.completion_tokens
+        self.semantic_rerank_seconds += time.perf_counter() - started
+        if result.status.startswith("fallback:"):
+            degraded.append("semantic_rerank")
+            tier = _worst_tier(tier, "semantic_rerank_fallback")
+        if not result.applied:
+            return candidates, tier
+        by_identifier = {candidate.parent_asin: candidate for candidate in candidates}
+        reordered = [
+            by_identifier[identifier]
+            for identifier in result.ordered
+            if identifier in by_identifier
+        ]
+        return (reordered or candidates), tier
+
+    def _allocate(
+        self,
+        candidates: list[ScoredCandidate],
+        top_k: int,
+        tier: str,
+        degraded: list[str],
+    ) -> tuple[list[dict], str]:
+        ranked = [{"parent_asin": candidate.parent_asin} for candidate in candidates[:top_k]]
+        if self._allocator is None:
+            return ranked, tier
+        try:
+            allocation = self._allocator.allocate(candidates, top_k)
+        except Exception:
+            degraded.append("allocation")
+            return ranked, _worst_tier(tier, "allocation_fallback")
+        return [
+            {"parent_asin": identifier}
+            for identifier in allocation.recommendations
+        ], tier
+
+    def _degraded_recommendations(
+        self,
+        query: str,
+        top_k: int,
+        state: SessionState,
+    ) -> tuple[list[dict], str]:
+        """Walk down the retrieval tiers until one of them returns something."""
+        try:
+            return self._search(query, top_k, state), "retrieval_fused"
+        except Exception:
+            pass
+        try:
+            return self._lexical_search(query, top_k), "retrieval_lexical"
+        except Exception:
+            return [], "empty"
+
+    def _clarify(
+        self,
+        state: SessionState,
+    ) -> tuple[str, str | None, str | None, str, float | None, float | None]:
         message = "Here are the closest matches I found."
         internal_ask_attribute = None
         ask_attribute = None
@@ -434,27 +756,50 @@ class Agent:
                 question_score = analysis.trace_for(internal_ask_attribute).final_question_score
             if decision.message:
                 message = decision.message
-        state.record_asked_attribute(internal_ask_attribute, ask_attribute)
-        state.phase4_turn_history.append({
-            "turn": state.turn,
-            "user_message": user_message,
-            "rewritten_query": query,
-            "ask_attribute": internal_ask_attribute,
-            "api_attribute": ask_attribute,
-            "question_score": question_score,
-            "question_threshold": question_threshold,
-            "decision_reason": decision_reason,
-            "recommendations": list(state.last_recommendations),
-            "slots": {
-                name: (
-                    list(slot.value) if isinstance(slot.value, tuple) else slot.value
-                )
-                for name, slot in state.slots.items()
+        return (
+            message,
+            internal_ask_attribute,
+            ask_attribute,
+            decision_reason,
+            question_score,
+            question_threshold,
+        )
+
+    def _record_trace(
+        self,
+        *,
+        state: SessionState,
+        tier: str,
+        query: str,
+        parsed: object | None,
+        ask_attribute: str | None,
+        decision_reason: str,
+        recommendation_count: int,
+        stage_milliseconds: dict[str, float],
+        degraded: list[str],
+    ) -> TurnTrace:
+        patches = getattr(parsed, "patches", ()) or ()
+        trace = TurnTrace(
+            session_id=state.session_id,
+            turn=state.turn,
+            fallback_tier=tier,
+            route_health=self.route_health(),
+            route_candidates={
+                "fused_candidates": len(state.last_candidate_scores),
+                "returned": recommendation_count,
             },
-        })
-        return {
-            "message": message,
-            "ask_attribute": ask_attribute,
-            "recommendations": recommendations,
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-        }
+            rewritten_query=query,
+            state_patches=tuple(
+                f"{patch.operation.value}:{patch.slot}" for patch in patches
+            ),
+            active_slots=tuple(sorted(state.slots)),
+            scenario=state.active_scenario,
+            ask_attribute=ask_attribute,
+            question_reason=decision_reason,
+            recommendation_count=recommendation_count,
+            stage_milliseconds={
+                name: round(value, 4) for name, value in stage_milliseconds.items()
+            },
+            degraded_stages=tuple(degraded),
+        )
+        return self.tracer.record(trace)

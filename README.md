@@ -34,7 +34,7 @@ Verify the downloaded file using the published `SHA256SUMS` file.
 
 ## Run the Starter
 
-Phase 2 requires Python 3.11 or later because the reproducibility-pinned NumPy 2.3.5 package declares that minimum. Install the dependency and build the reusable retrieval artifacts once:
+Python 3.11 or later is required. Install the dependency and build the reusable retrieval artifacts once:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -42,9 +42,22 @@ python -m scripts.build_retrieval_index
 python -m evaluator.local_evaluator
 ```
 
-The artifact build includes the catalog-trained dense representation and the facet index, with no model download or runtime network access. Current candidate generation is the frozen P2-E005 lexical + facet setup (`1.0/0.55`, RRF `k=60`) with dense disabled, followed by the selected P3-E002 deterministic feature reranker over fresh Top-200 candidates. P4-E002 then analyzes catalog-backed coverage/information gain over the reranked Top-100 and asks one short deterministic question only when its turn-adjusted utility passes the configured threshold; the current Top 10 are always returned alongside it. Persistence is available experimentally but inactive. Missing optional artifacts or ranking components degrade safely to fresh lexical ordering.
+The artifact build includes the catalog-trained dense representation and the facet index, with no model download or runtime network access. Candidate generation is the P2-E005 lexical + facet setup with the Phase 7 facet weight (`1.0/0.95`, RRF `k=60`) and dense disabled, followed by the P3-E002 deterministic feature reranker over fresh Top-200 candidates. P4-E002 then analyzes catalog-backed coverage/information gain over the reranked Top-100 and asks one short deterministic question only when its turn-adjusted utility passes the configured threshold; the current Top 10 are always returned alongside it. Phase 5 added a nine-tier fallback ladder, a per-turn production trace, and a facet tie-break that is reproducible across NumPy builds. Persistence, dense retrieval, the Top-K hedge allocator, and the LLM reranker are all implemented and inactive; any missing artifact or failing component degrades to a lower tier rather than losing the turn.
 
-The selected Phase 4 runtime scores HR@10 `0.325000`, MRR `0.175629`, MTTC `8.025000`, and recommended TechnicalScore `0.274689` on the public evaluator. Set `TECHJAM_PHASE4_MODE=off` to reproduce the frozen P3-E002 ranking-only control or `analyze` to emit diagnostics without changing user-visible behavior.
+The selected `P7-E009` runtime scores HR@10 `0.530000`, MRR `0.233736`, MTTC `6.190000`, and recommended TechnicalScore `0.431321` on the public evaluator, with `0` reported tokens and a `136.75 s` run. Set `TECHJAM_PHASE4_MODE=off` for the ranking-only control, `TECHJAM_PHASE5_MODE=allocate` for the rolled-back Top-K allocator, or `TECHJAM_FACET_DETERMINISTIC_TIES=0` for the pre-Phase-5 tie order. `docs/EXPERIMENT_LOG.md` records every evaluated change, including the one where the highest-scoring configuration was deliberately not selected.
+
+### Optional LLM reranking (off by default)
+
+The agent needs no credentials and makes no network call unless `TECHJAM_PHASE6_MODE` is set:
+
+```bash
+python -m pip install anthropic
+export ANTHROPIC_API_KEY=...          # never commit this
+TECHJAM_PHASE6_MODE=shadow python -m evaluator.local_evaluator   # price the calls only
+TECHJAM_PHASE6_MODE=rerank python -m evaluator.local_evaluator   # apply the ordering
+```
+
+This route uses `claude-opus-5` over a 40-candidate shortlist, at most three calls per session, with a 12-second timeout and a deterministic fallback on every failure path. It has been tested against an injected fake client but **never run against a real model**, so no score is claimed for it.
 
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
 The command writes per-session results and aggregate metrics to `results.json`.
@@ -101,8 +114,16 @@ docs/competition_specification.md participant rules and evaluation protocol
 docs/agent_api_contract.json      machine-readable Agent contract
 docs/evaluation_config.json       scoring configuration
 docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
+starter/agent.py                  official Agent: staged pipeline, fallbacks, tracing
+starter/retrieval/                lexical, facet, dense routes and weighted RRF
+starter/ranking/                  candidate evidence and the deterministic feature scorer
+starter/clarification.py          coverage/EIG analysis and the question policy
+starter/llm/                      optional Claude Opus 5 shortlist reranker (off by default)
+scripts/compare_results.py        session-level delta between two evaluator runs
 evaluator/local_evaluator.py      public-set simulator and scorer
+docs/EXPERIMENT_LOG.md            every evaluated change and its keep/rollback decision
+docs/TECHJAM_BUILD_MAP.md         phase status, decisions, known problems, metrics
+docs/REPO_OVERVIEW.md             repository map and reproduction commands
 ```
 
 ## Judging and Submission Policy
