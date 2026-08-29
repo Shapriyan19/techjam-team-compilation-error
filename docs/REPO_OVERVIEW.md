@@ -1,6 +1,6 @@
 # Repository Overview
 
-Phase 0 inventory was recorded on 2026-08-28 and revalidated on 2026-08-29 from commit `6c5d3d16b319460631b5e684fb72cae9979820d4`. Phases 1–4 were completed on 2026-08-29 without changing the official evaluator, catalog, labels, or scoring logic. Phase 2 selected lexical + facet retrieval with dense disabled; Phase 3 kept deterministic feature reranking; Phase 4 added the selected catalog-backed clarification policy while leaving persistence inactive.
+Phase 0 inventory was recorded on 2026-08-28 and revalidated on 2026-08-29 from commit `6c5d3d16b319460631b5e684fb72cae9979820d4`. Phases 1–7 were completed on 2026-08-29 without changing the official evaluator, catalog, labels, or scoring logic. Phase 2 selected lexical + facet retrieval with dense disabled; Phase 3 kept deterministic feature reranking; Phase 4 added the catalog-backed clarification policy; Phase 5 hardened the runtime and made facet tie-breaking reproducible across NumPy builds; Phase 6 added an optional, off-by-default Claude Opus 5 shortlist reranker; Phase 7 tuned two parameters. Persistence, dense retrieval, the Top-K allocator, and the LLM reranker are all implemented and inactive.
 
 This document answers: **What exists in this repository, and where do I find it?**
 
@@ -32,9 +32,16 @@ This document answers: **What exists in this repository, and where do I find it?
 |   `-- local_evaluator.py             Public simulator, normalizer, and scorer
 |-- starter/
 |   |-- __init__.py
-|   |-- agent.py                       Official Agent, lexical route, hybrid orchestration/fallback
+|   |-- agent.py                       Official Agent, staged pipeline, fallback ladder, tracing
 |   |-- clarification.py               Coverage/EIG analyzer, templates, and ask/no-ask policy
 |   |-- clarification_config.py        Phase 4 modes, weights, thresholds, and turn schedule
+|   |-- runtime_config.py              Phase 5 modes, trace/cache settings, allocation config
+|   |-- tracing.py                     Per-turn production trace and fallback-tier health counters
+|   |-- allocation.py                  Deterministic Top-K hedge/coverage allocator (inactive)
+|   |-- llm/
+|   |   |-- config.py                  Phase 6 modes, model, shortlist, budget, timeout
+|   |   |-- client.py                  Anthropic SDK adapter and the client seam used by tests
+|   |   `-- rerank.py                  Prompt construction, permutation guard, fallback result
 |   |-- ranking/
 |   |   |-- config.py                  Phase 3 modes, pool settings, and explained weights
 |   |   |-- evidence.py                Per-session candidate evidence pool and persistence score
@@ -49,15 +56,18 @@ This document answers: **What exists in this repository, and where do I find it?
 |   `-- understanding.py               Deterministic parser and active-state query rewrite
 |-- scripts/
 |   |-- build_retrieval_index.py       Reproducible one-time artifact build command
-|   `-- phase4_diagnostics.py          Official-evaluator wrapper and causal trace export
+|   |-- phase4_diagnostics.py          Official-evaluator wrapper and causal trace export
+|   `-- compare_results.py             Session-level new/lost/rank/turn delta between two runs
 |-- tests/
 |   |-- __init__.py
 |   |-- test_evaluator.py              Three evaluator behavior tests
 |   |-- test_phase1_state.py           Twelve Phase 1 state/parser/integration tests
 |   |-- test_phase2_retrieval.py       Dense/facet/RRF/fallback/integration tests
 |   |-- test_phase3_ranking.py         Persistence/reranker/unit/integration tests
-|   `-- test_phase4_clarification.py   Coverage/EIG/policy/schema/integration tests
-|-- requirements.txt                   Pinned NumPy 2.3.5 dependency
+|   |-- test_phase4_clarification.py   Coverage/EIG/policy/schema/integration tests
+|   |-- test_phase5_runtime.py         Phrase equivalence, tie determinism, allocator, traces, fallbacks
+|   `-- test_phase6_llm.py             Permutation guard, budgets, prompt safety, fake-client integration
+|-- requirements.txt                   NumPy dependency range; optional anthropic extra
 |-- .gitignore                         Ignores local catalog, results, secrets, and caches
 `-- results.json                       Generated evaluator output; ignored
 ```
@@ -107,19 +117,26 @@ python -m evaluator.local_evaluator
        -> apply SET / UPDATE / REMOVE / RESET_DEPENDENTS patches
        -> rewrite a query from all active slots plus a safe latest-message fallback
        -> run unchanged OR-based weighted FTS5 BM25 Top-100
-       -> run safe catalog-backed facet/category Top-100
-       -> fuse lexical and facet ranks with weighted RRF (1.0 / 0.55, k=60)
+       -> run safe catalog-backed facet/category Top-100 with deterministic tie order
+       -> fuse lexical and facet ranks with weighted RRF (1.0 / 0.95, k=60)
        -> retain the fresh fused Top-200 candidate set
        -> decode bounded catalog metadata only for those candidates
        -> deterministically score retrieval + state agreement + safe commercial evidence
-       -> retain the unchanged reranked Top 10 recommendations
+       -> optionally rerank a 40-candidate shortlist with Claude Opus 5 (off by default)
+       -> optionally hedge the Top-K across catalog groups (off by default)
+       -> retain the reranked Top 10 recommendations
        -> analyze catalog-backed coverage/EIG over the reranked Top 100
        -> apply known/asked/no-preference, confidence, and turn-cost gates
        -> return a short deterministic question when worthwhile plus the same Top 10
+       -> guarantee ordered, unique, non-empty identifiers
+       -> record a per-turn production trace
   -> normalize exact catalog IDs
   -> calculate overall and scenario metrics
   -> write results.json
 ```
+
+Every stage after state update is wrapped in the Phase 5 fallback ladder, so an exception in any
+optional component degrades the response instead of losing the turn.
 
 The Agent is stateful per session. The anonymized user profile is stored but intentionally not used for ranking. Dense retrieval remains available experimentally through `TECHJAM_DENSE_WEIGHT`, but its default weight is `0`. Phase 3 persistence is implemented and independently reproducible, but disabled after P3-E001. The default is P3-E002 fresh-candidate reranking followed by the kept P4-E002 clarification policy.
 
@@ -219,6 +236,79 @@ Each already-known askable attribute adds `0.06`; Buying adds `0.12`; Browsing s
 
 `SessionState.question_analysis_history` stores every attribute trace; `phase4_turn_history` stores the user message, rewritten query, question decision, slots, and recommendations. `scripts/phase4_diagnostics.py` runs the untouched evaluator function and correlates those states by reset order to export question statistics and causal next-turn records. No target IDs enter runtime decisions.
 
+## Phase 5 runtime architecture
+
+`starter/runtime_config.py` owns `PhaseFiveConfig` with three modes: `off` (no trace, no
+allocator), `trace` (the default; records per-turn traces and changes nothing visible), and
+`allocate` (`P5-E003`, rolled back). It also owns `TECHJAM_FEATURE_CACHE_SIZE` and the
+allocator's pool size, protected head, group cap, and group key.
+
+### Fallback ladder
+
+`starter/tracing.py` defines the ordered tiers, worst-observed-wins per turn:
+
+`full` -> `semantic_rerank_fallback` -> `allocation_fallback` -> `clarification_fallback` ->
+`understanding_fallback` -> `retrieval_fused` -> `retrieval_lexical` ->
+`previous_recommendations` -> `empty`
+
+`respond(...)` runs as staged helpers — `_session_for_response`, `_understand`, `_recommend`
+(retrieval, semantic rerank, allocation), `_clarify`, `_record_trace` — each with its own guard.
+A missing `reset(...)` self-heals into a fresh session rather than raising.
+`_unique_recommendations` enforces the official contract on the way out.
+
+### Per-turn trace
+
+`RuntimeTracer` keeps a bounded ring (`TECHJAM_TRACE_HISTORY_LIMIT`, default `64`) plus unbounded
+counters. Each `TurnTrace` carries session id, turn, fallback tier, route health, route candidate
+counts, the rewritten query, state patch operations, active slot names, scenario, ask attribute,
+question reason, recommendation count, per-stage latency, and degraded stages. It contains no
+target, label, or evaluator state, which `test_phase5_runtime.py` asserts by name.
+`Agent.last_trace()`, `Agent.trace_history()`, and `Agent.runtime_stats()` expose it.
+
+### Deterministic facet tie-breaking
+
+Facet scores are sums of field weight times IDF, so large groups of products score identically and
+the Top-100 boundary lands inside a tie. `argpartition` resolved that boundary differently per
+NumPy build; a stable descending `argsort` resolves it identically everywhere, ties falling to
+ascending catalog row order. `TECHJAM_FACET_DETERMINISTIC_TIES=0` restores the old path as the
+exact control. Measured cost: `0.613 ms` against `0.601 ms` per Top-100 query.
+
+### Top-K allocator (implemented, inactive)
+
+`starter/allocation.py` protects the first three slots, caps later slots at two candidates per
+catalog group drawn from the reranked Top-50, never caps a candidate whose group metadata is
+missing, and appends deferred candidates so the Top-K is always full. `P5-E003` lost 11 hits, so
+the default mode stays `trace`.
+
+## Phase 6 optional LLM reranking
+
+`starter/llm/` is off unless `TECHJAM_PHASE6_MODE` is set. `config.py` owns the mode
+(`off`/`shadow`/`rerank`), model (`claude-opus-5`), shortlist size (`40`), session call budget
+(`3`), turn window (`1-8`), timeout (`12 s`), retries (`1`), output cap, and effort (`low`).
+`client.py` adapts the official `anthropic` SDK — adaptive thinking, `json_schema` structured
+output, refusal detection — and raises `LLMUnavailable` when the key or package is missing, which
+disables the route at construction time. `rerank.py` builds the prompt from session state and
+compact catalog records, then coerces whatever the model returns into a full permutation of the
+shortlist, so a model answer can never invent, drop, or duplicate an identifier.
+
+The route sits between the deterministic reranker and the allocator. Any failure returns the
+deterministic order and records a `semantic_rerank_fallback` tier. Token usage flows into the
+official `usage` field. `RerankClient` is a protocol, so all 18 Phase 6 tests run against an
+injected fake and never touch the network. **The route has never been run against a real model.**
+
+## Phase 7 selected parameters
+
+| Parameter | Phase 4 value | Selected | Experiment |
+|---|---:|---:|---|
+| Facet route weight | `0.55` | `0.95` | `P7-E006` |
+| Browsing question discount | `0.08` | `0.14` | `P7-E004` |
+
+Rejected after measurement: RRF `k=40`, fresh candidate limit `300` (byte-identical), question
+candidate `K=50`, and every facet weight above `0.95`. The weights above `0.95` score higher on the
+public set — up to `0.494176` at `2.50` — but a tie-order-independent sweep shows the real facet
+peak is at `0.95`; the rest of that climb is the catalog-order artifact documented in
+`docs/TECHJAM_BUILD_MAP.md`.
+
 ## Current indexing architecture
 
 The lexical control remains unchanged: `Agent.__init__()` creates an in-memory SQLite FTS5 table and rebuilds it from all 50,000 catalog rows for every new process. Indexed columns and BM25 weights are:
@@ -271,7 +361,7 @@ Dense build time was `95.407 s`; facet build time was `5.117 s`; end-to-end buil
 
 ### Offline/submission conclusion
 
-The official rules permit declared dependencies and lightweight local assets and document no explicit artifact-size limit. They also warn that network access may be disabled. The project therefore pins `numpy==2.3.5`, packages or locally builds the catalog-trained artifacts, performs no model download, and needs no evaluator-time network access. The default lexical + facet path does not load the dense artifacts; the optional dense experiment path retains checksum validation and lexical fallback.
+The official rules permit declared dependencies and lightweight local assets and document no explicit artifact-size limit. They also warn that network access may be disabled. The default runtime therefore needs only NumPy, packages or locally builds the catalog-trained artifacts, performs no model download, and makes no evaluator-time network call. The optional Phase 6 route is the only component that would need network access, and it is off by default. The default lexical + facet path does not load the dense artifacts; the optional dense experiment path retains checksum validation and lexical fallback.
 
 ## Where do I find X?
 
@@ -288,22 +378,27 @@ The official rules permit declared dependencies and lightweight local assets and
 | Dense indexing/search | `starter/retrieval/dense.py` | Implemented offline with NumPy random indexing/cosine search; disabled by default after P2-E005/P2-E006 |
 | Product text schema | `starter/retrieval/text.py` | Implemented as `techjam_product_text_v2` |
 | Facet/category retrieval | `starter/retrieval/facets.py` | Implemented from safe actual metadata |
-| Weighted RRF/configuration | `starter/retrieval/rrf.py`, `starter/retrieval/config.py` | Default lexical `1.0`, facet `0.55`, dense `0.0`, `k=60`; independently configurable |
+| Weighted RRF/configuration | `starter/retrieval/rrf.py`, `starter/retrieval/config.py` | Default lexical `1.0`, facet `0.95` (P7-E006), dense `0.0`, `k=60`; independently configurable |
 | Offline index command | `scripts/build_retrieval_index.py` | Implemented |
 | Persistent evidence | `starter/ranking/evidence.py`, `SessionState.candidate_pool` | Implemented/tested as P3-E001; rolled back from default |
 | Deterministic reranker | `starter/ranking/features.py` | Implemented/tested as P3-E002; current ranking stage |
 | Information gain / facet coverage | `starter/clarification.py::InformationGainAnalyzer` | Implemented/tested as P4-E001; diagnostic layer retained |
 | Turn and question policy | `starter/clarification.py::ConservativeQuestionPolicy` | Implemented/tested as P4-E002; current default |
-| Top-K allocator | `starter/agent.py` and evaluator normalization in `evaluator/local_evaluator.py` | Only raw BM25 order and validity normalization; Phase 5 allocator absent |
-| LLM adapter / semantic reranker | None | Not implemented; optional Phase 6 |
-| Dense-to-lexical fallback | `starter/agent.py::_load_optional_retrievers` and `_search` | Implemented in Phase 2; full tiered fallback/tracing remains Phase 5 |
+| Top-K allocator | `starter/allocation.py` | Implemented/tested as `P5-E003`; rolled back from default |
+| LLM adapter / semantic reranker | `starter/llm/client.py`, `starter/llm/rerank.py` | Implemented/tested; off by default and never measured against a real model |
+| Runtime modes, trace ring, cache size | `starter/runtime_config.py`, `starter/tracing.py` | Implemented in Phase 5; `trace` is the default |
+| Per-turn production trace | `Agent.last_trace()`, `Agent.trace_history()`, `Agent.runtime_stats()` | Implemented in Phase 5 |
+| Tiered fallbacks / Top-K contract guard | `starter/agent.py::_recommend`, `_degraded_recommendations`, `_unique_recommendations` | Implemented in Phase 5 |
+| Facet tie determinism | `starter/retrieval/facets.py::FacetRetriever.search` | Implemented as `P5-E002`; `TECHJAM_FACET_DETERMINISTIC_TIES=0` restores the control |
+| Run-to-run session comparison | `scripts/compare_results.py` | Implemented in Phase 5 |
+| Dense-to-lexical fallback | `starter/agent.py::_load_optional_retrievers` and `_search` | Implemented in Phase 2; extended into the Phase 5 tier ladder |
 | Catalog loader | `starter/agent.py::_build_index` and `evaluator/local_evaluator.py::catalog_index` | Present; each independently streams the JSONL file |
 | Public evaluator | `evaluator/local_evaluator.py` | Present; do not modify |
 | Public development sessions | `data/public_set.jsonl` | Present: 200 labeled sessions |
 | Frozen catalog | `data/catalog.jsonl.gz` | Present: 50,000 unique products |
 | Evaluation configuration | `docs/evaluation_config.json` | Present |
-| Requirements | `requirements.txt` | `numpy==2.3.5`; exact pin matches artifact build runtime |
-| Tests | `tests/test_evaluator.py`, `tests/test_phase1_state.py`, `tests/test_phase2_retrieval.py`, `tests/test_phase3_ranking.py`, `tests/test_phase4_clarification.py` | 77 total tests |
+| Requirements | `requirements.txt` | `numpy>=2.3.5,<3`; artifacts were built on `2.3.5`, Phases 5-7 measured on `2.4.6`. `anthropic` is optional and only for Phase 6 |
+| Tests | `tests/test_evaluator.py`, `tests/test_phase1_state.py`, `tests/test_phase2_retrieval.py`, `tests/test_phase3_ranking.py`, `tests/test_phase4_clarification.py`, `tests/test_phase5_runtime.py`, `tests/test_phase6_llm.py` | 124 total tests |
 | Experiment log | `docs/EXPERIMENT_LOG.md` | Created in Phase 0 |
 
 ## Data snapshot
@@ -318,7 +413,7 @@ The official rules permit declared dependencies and lightweight local assets and
 
 ## Commands
 
-Phase 2 requires Python 3.11 or later because the reproducibility-pinned NumPy 2.3.5 package declares that minimum. NumPy is the only third-party dependency.
+Phase 2 requires Python 3.11 or later because NumPy 2.3.5 declares that minimum. NumPy is the only third-party dependency of the default runtime; `anthropic` is needed only for the optional Phase 6 route. NumPy `2.3.5` has no wheel for Python 3.14, so newer 2.x releases are accepted: after P5-E002 the active lexical + facet path no longer depends on NumPy tie partitioning.
 
 The kept facet route uses NumPy at runtime. If the dependency has not been installed, the Agent deliberately disables the facet route and returns the exact lexical safety control rather than failing; that fallback is valid but does not produce the kept P2-E005 score.
 
@@ -363,9 +458,23 @@ python -c "import json; from starter.agent import Agent; from evaluator.local_ev
 
 This uses the official evaluator flow but restricts evaluation to the first public sample. State can be inspected through `Agent.session_state(session_id).to_dict()` and retrieval health/latency through `Agent.runtime_stats()`.
 
+### Reproducing Phases 2–4 after Phases 5–7
+
+Three defaults moved after those experiments were recorded. To reproduce a Phase 2, 3, or 4
+number exactly, restore all three alongside that phase's own settings:
+
+```bash
+TECHJAM_FACET_DETERMINISTIC_TIES=0    # pre-P5-E002 facet tie order
+TECHJAM_FACET_WEIGHT=0.55             # pre-P7-E006 facet weight
+TECHJAM_QUESTION_BROWSING_DISCOUNT=0.08  # pre-P7-E004 browsing discount
+```
+
+Even then, the recorded Phase 2–4 numbers came from a NumPy 2.3.5 host; see the host note in
+`docs/EXPERIMENT_LOG.md`.
+
 ### Reproduce Phase 2 sub-experiments
 
-Set `TECHJAM_RETRIEVAL_MODE` to `lexical`, `hybrid`, `hybrid_facet`, or `scenario`, then run the official evaluator. The kept default is `hybrid_facet` with lexical weight `1.0`, facet weight `0.55`, dense weight `0.0`, route Top-N `100`, and RRF `k=60`. Top-N values, route weights, artifact location, and checksum validation have `TECHJAM_*` environment overrides in `starter/retrieval/config.py`.
+Set `TECHJAM_RETRIEVAL_MODE` to `lexical`, `hybrid`, `hybrid_facet`, or `scenario`, then run the official evaluator. The kept default is `hybrid_facet` with lexical weight `1.0`, facet weight `0.95` after P7-E006, dense weight `0.0`, route Top-N `100`, and RRF `k=60`. Phase 2 experiments below therefore pass `TECHJAM_FACET_WEIGHT='0.55'` explicitly to restore the Phase 2 setting. Top-N values, route weights, artifact location, and checksum validation have `TECHJAM_*` environment overrides in `starter/retrieval/config.py`.
 
 The final controlled ablations are reproducible in PowerShell as:
 
@@ -410,20 +519,80 @@ python -m scripts.phase4_diagnostics --output artifacts/evaluation/p4_e002_diagn
 
 Unset `TECHJAM_PHASE4_MODE` to use the selected `ask` default.
 
+### Reproduce Phase 5 sub-experiments
+
+```bash
+# P5-E001 / P5-E002 control: the pre-Phase-5 tie order
+TECHJAM_FACET_DETERMINISTIC_TIES=0 TECHJAM_FACET_WEIGHT=0.55 \
+  TECHJAM_QUESTION_BROWSING_DISCOUNT=0.08 \
+  python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e001.json
+
+# P5-E002 alone, on the Phase 4 parameters
+TECHJAM_FACET_WEIGHT=0.55 TECHJAM_QUESTION_BROWSING_DISCOUNT=0.08 \
+  python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e002.json
+
+# P5-E003 Top-K allocator (rolled back)
+TECHJAM_PHASE5_MODE=allocate TECHJAM_FACET_WEIGHT=0.55 \
+  TECHJAM_QUESTION_BROWSING_DISCOUNT=0.08 \
+  python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e003.json
+
+python -m scripts.compare_results artifacts/evaluation/p5_e002.json artifacts/evaluation/p5_e003.json --brief
+```
+
+`TECHJAM_PHASE5_MODE` accepts `off`, `trace` (default), and `allocate`.
+`TECHJAM_TRACE_HISTORY_LIMIT` and `TECHJAM_FEATURE_CACHE_SIZE` tune the trace ring and the
+decoded-feature cache; the cache trades `-17%` wall time for `+127 MiB` at `20000`.
+
+### Run the optional Phase 6 LLM reranker
+
+```bash
+python -m pip install anthropic
+export ANTHROPIC_API_KEY=...        # never commit this
+TECHJAM_PHASE6_MODE=shadow python -m evaluator.local_evaluator --output artifacts/evaluation/p6_shadow.json
+TECHJAM_PHASE6_MODE=rerank python -m evaluator.local_evaluator --output artifacts/evaluation/p6_e001.json
+```
+
+`shadow` prices the calls without changing the visible response; `rerank` applies the ordering.
+Other overrides: `TECHJAM_LLM_MODEL`, `TECHJAM_LLM_SHORTLIST`, `TECHJAM_LLM_MAX_CALLS`,
+`TECHJAM_LLM_FIRST_TURN`, `TECHJAM_LLM_LAST_TURN`, `TECHJAM_LLM_TIMEOUT`,
+`TECHJAM_LLM_MAX_RETRIES`, `TECHJAM_LLM_MAX_TOKENS`, `TECHJAM_LLM_EFFORT`. With the mode unset the
+agent makes no network call, declares no credential, and reports zero tokens.
+
+### Reproduce Phase 7 tuning
+
+```bash
+TECHJAM_RRF_K=40 python -m evaluator.local_evaluator --output artifacts/evaluation/p7_e001.json
+TECHJAM_FACET_WEIGHT=0.75 python -m evaluator.local_evaluator --output artifacts/evaluation/p7_e002.json
+TECHJAM_QUESTION_BROWSING_DISCOUNT=0.14 python -m evaluator.local_evaluator --output artifacts/evaluation/p7_e004.json
+python -m evaluator.local_evaluator --output artifacts/evaluation/p7_final.json
+```
+
+The last command uses the selected defaults and reproduces `P7-E009` byte-for-byte.
+
 ## Current implementation status
 
-Phase 4 is complete. P4-E001 is the byte-identical diagnostic control above P3-E002. P4-E002 adds conservative catalog-backed questions and is the selected runtime. P2-E005 remains the frozen candidate generator; P3-E002 remains the ranking control. Dense and persistence remain available but inactive. Phase 5 has not started.
+Phases 0–7 are complete. `P2-E005` remains the frozen candidate generator with the Phase 7 facet
+weight; `P3-E002` remains the ranking stage; `P4-E002` remains the question policy with the Phase 7
+browsing discount; `P5-E001` hardening and `P5-E002` deterministic tie-breaking are active. Dense
+retrieval, persistence, the Top-K allocator, and the LLM reranker are implemented, tested, and
+inactive.
 
 ## Current best metrics
 
-The current best official TechnicalScore is Phase 4 experiment `P4-E002`:
+The current best official TechnicalScore is `P7-E009`:
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| Overall | 200 | 0.325000 | 0.175629 | 8.025000 |
-| Buying | 80 | 0.362500 | 0.248140 | 7.412500 |
-| Browsing | 80 | 0.325000 | 0.142669 | 8.100000 |
-| Intent Override | 30 | 0.233333 | 0.112037 | 9.400000 |
-| Boundary | 10 | 0.300000 | 0.050000 | 8.200000 |
+| Overall | 200 | 0.530000 | 0.233736 | 6.190000 |
+| Buying | 80 | 0.537500 | 0.289752 | 5.687500 |
+| Browsing | 80 | 0.587500 | 0.236141 | 5.775000 |
+| Intent Override | 30 | 0.400000 | 0.133452 | 8.266667 |
+| Boundary | 10 | 0.400000 | 0.067222 | 7.300000 |
 
-Overall Efficiency is `0.297500`; overall recommended TechnicalScore is `0.274689`. Versus P3-E002, P4-E002 has 22 new hits, 0 lost hits, 1 better rank, 1 worse rank, 0 earlier shared hits, and 1 later shared hit. TechnicalScore is `+0.091692`; reported token usage remains zero. The final suite has `77 passed, 0 failed`.
+Overall Efficiency is `0.481000`; overall recommended TechnicalScore is `0.431321`. Against the
+same-host Phase 4 control (`0.269396`) that is 43 new hits, 1 lost hit, 21 better shared-hit ranks,
+24 worse, 10 earlier shared hits, and 2 later, for `+0.161925`. Roughly `0.09` of the gain is
+attributable to catalog row ordering rather than to retrieval, which
+`docs/TECHJAM_BUILD_MAP.md` records under known problems. Reported token usage remains zero
+because Phase 6 is off. The final suite has `124 passed, 0 failed` and the evaluator takes
+`136.75 s`.

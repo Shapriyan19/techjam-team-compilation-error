@@ -27,6 +27,22 @@ This document answers: **What changes improved or worsened the score?**
 | P3-E002 | Deterministic feature reranker over fresh P2-E005 Top-200 candidates; persistence off | 0.215000 | 0.115323 | 8.955000 | 0.204500 | 0.182997 | 0.337500 / 0.223140 / 7.637500 | 0.100000 / 0.017946 / 10.012500 | 0.200000 / 0.117593 / 9.633333 | 0.200000 / 0.025000 / 9.000000 | Keep/default |
 | P4-E001 | Catalog-backed coverage/EIG analysis over reranked Top-100; no user-visible policy | 0.215000 | 0.115323 | 8.955000 | 0.204500 | 0.182997 | 0.337500 / 0.223140 / 7.637500 | 0.100000 / 0.017946 / 10.012500 | 0.200000 / 0.117593 / 9.633333 | 0.200000 / 0.025000 / 9.000000 | Keep as diagnostic control |
 | P4-E002 | Conservative coverage/EIG clarification policy; Top 10 always retained | 0.325000 | 0.175629 | 8.025000 | 0.297500 | 0.274689 | 0.362500 / 0.248140 / 7.412500 | 0.325000 / 0.142669 / 8.100000 | 0.233333 / 0.112037 / 9.400000 | 0.300000 / 0.050000 / 8.200000 | Keep/default |
+| P4-E002/H2 | Same code, second host (Python 3.14.6, NumPy 2.4.6); establishes the Phase 5 local control | 0.320000 | 0.171988 | 8.110000 | 0.289000 | 0.269396 | 0.337500 / 0.231384 / 7.675000 | 0.337500 / 0.141503 / 8.037500 | 0.266667 / 0.143889 / 9.166667 | 0.200000 / 0.025000 / 9.000000 | Local control only |
+| P5-E001 | Equivalence-preserving speedups, per-turn production trace, tiered fallbacks | 0.320000 | 0.171988 | 8.110000 | 0.289000 | 0.269396 | 0.337500 / 0.231384 / 7.675000 | 0.337500 / 0.141503 / 8.037500 | 0.266667 / 0.143889 / 9.166667 | 0.200000 / 0.025000 / 9.000000 | Keep; byte-identical, `-32.7%` wall time |
+| P5-E002 | NumPy-version-independent facet Top-N tie-breaking | 0.440000 | 0.213296 | 7.050000 | 0.395000 | 0.362989 | 0.450000 / 0.262470 / 6.537500 | 0.475000 / 0.206275 / 6.875000 | 0.366667 / 0.130317 / 8.500000 | 0.300000 / 0.125000 / 8.200000 | Keep/default |
+| P5-E003 | Deterministic Top-K hedge allocator over reranked candidates | 0.385000 | 0.216881 | 7.555000 | 0.344500 | 0.326464 | 0.400000 / 0.254340 / 7.012500 | 0.412500 / 0.213229 / 7.462500 | 0.300000 / 0.129021 / 8.966667 | 0.300000 / 0.210000 / 8.400000 | Rollback |
+| P7-E001 | RRF `k` `60` -> `40` | 0.450000 | 0.206077 | 6.925000 | 0.407500 | 0.368323 | 0.487500 / 0.252495 / 6.162500 | 0.475000 / 0.192872 / 6.850000 | 0.333333 / 0.145000 / 8.733333 | 0.300000 / 0.123611 / 8.200000 | Rollback |
+| P7-E002 | Facet weight `0.55` -> `0.75` | 0.470000 | 0.216341 | 6.740000 | 0.426000 | 0.385102 | 0.525000 / 0.278919 / 5.800000 | 0.462500 / 0.192202 / 6.937500 | 0.400000 / 0.137619 / 8.233333 | 0.300000 / 0.145000 / 8.200000 | Superseded by P7-E006 |
+| P7-E003 | Fresh candidate limit `200` -> `300` | 0.440000 | 0.213296 | 7.050000 | 0.395000 | 0.362989 | 0.450000 / 0.262470 / 6.537500 | 0.475000 / 0.206275 / 6.875000 | 0.366667 / 0.130317 / 8.500000 | 0.300000 / 0.125000 / 8.200000 | Rollback (no effect) |
+| P7-E004 | Browsing question discount `0.08` -> `0.14` | 0.465000 | 0.225657 | 6.845000 | 0.415500 | 0.383297 | 0.450000 / 0.262470 / 6.537500 | 0.525000 / 0.235789 / 6.450000 | 0.366667 / 0.130317 / 8.500000 | 0.400000 / 0.136111 / 7.500000 | Keep |
+| P7-E005 | Question candidate `K` `100` -> `50` | 0.435000 | 0.220062 | 7.085000 | 0.391500 | 0.361819 | 0.450000 / 0.264851 / 6.537500 | 0.450000 / 0.218309 / 7.037500 | 0.400000 / 0.136984 / 8.300000 | 0.300000 / 0.125000 / 8.200000 | Rollback |
+| P7-E006 | Facet weight `0.55` -> `0.95` | 0.495000 | 0.217270 | 6.465000 | 0.453500 | 0.403381 | 0.537500 / 0.289752 / 5.687500 | 0.512500 / 0.196364 / 6.375000 | 0.400000 / 0.133452 / 8.266667 | 0.300000 / 0.056111 / 8.000000 | Keep |
+| P7-E007 | Facet `0.75` + browsing discount `0.14` | 0.495000 | 0.226230 | 6.540000 | 0.446000 | 0.404569 | 0.525000 / 0.278919 / 5.800000 | 0.512500 / 0.215536 / 6.525000 | 0.400000 / 0.137619 / 8.233333 | 0.400000 / 0.156111 / 7.500000 | Superseded by P7-E009 |
+| P7-E008 | Facet `0.75` + RRF `k` `40` | 0.475000 | 0.230579 | 6.695000 | 0.430500 | 0.392774 | 0.525000 / 0.277684 / 5.800000 | 0.487500 / 0.227307 / 6.725000 | 0.366667 / 0.142222 / 8.500000 | 0.300000 / 0.145000 / 8.200000 | Rollback |
+| **P7-E009** | **Facet `0.95` + browsing discount `0.14` (selected default)** | **0.530000** | **0.233736** | **6.190000** | **0.481000** | **0.431321** | 0.537500 / 0.289752 / 5.687500 | 0.587500 / 0.236141 / 5.775000 | 0.400000 / 0.133452 / 8.266667 | 0.400000 / 0.067222 / 7.300000 | **Keep/default** |
+| P7-E010 | Facet weight `1.20` | 0.545000 | 0.221677 | 5.880000 | 0.512000 | 0.441403 | 0.650000 / 0.309474 / 4.537500 | 0.512500 / 0.186974 / 6.212500 | 0.366667 / 0.121481 / 8.466667 | 0.500000 / 0.097500 / 6.200000 | Rejected: artifact-driven |
+| P7-E011 | Facet weight `1.60` | 0.575000 | 0.243841 | 5.560000 | 0.544000 | 0.469452 | 0.675000 / 0.314544 / 4.312500 | 0.562500 / 0.220997 / 5.625000 | 0.333333 / 0.121944 / 8.733333 | 0.600000 / 0.226667 / 5.500000 | Rejected: artifact-driven |
+| P7-E013 | Facet weight `2.50` | 0.615000 | 0.232921 | 5.160000 | 0.584000 | 0.494176 | 0.700000 / 0.330516 / 4.037500 | 0.637500 / 0.183507 / 4.887500 | 0.366667 / 0.107077 / 8.500000 | 0.500000 / 0.225000 / 6.300000 | Rejected: artifact-driven |
 
 ## P0-E000 — untouched starter baseline
 
@@ -371,10 +387,263 @@ Decision: **Keep as the Phase 4 default.** It materially improves every overall 
 
 Final verification: `77 passed, 0 failed`. Phase 5 was not started.
 
+## Host note for Phases 5–7
+
+Phases 5–7 were evaluated on a second host: Python 3.14.6 with NumPy 2.4.6, because
+`numpy==2.3.5` publishes no wheel for Python 3.14. The identical Phase 4 code scores
+`0.269396` there instead of the recorded `0.274689`, entirely because the facet route's
+Top-N cut depended on how a given NumPy build partitions tied scores. That difference is
+the subject of P5-E002, which removes the dependency. All Phase 5–7 deltas below are
+measured against the `0.269396` local control (`local_control_p4_e002.json`,
+SHA-256 `2AED99E0AAC422AB5A38CDB7864CF3534E2DB73FA360CE4779DDF3F21351399E`), never against
+the first host's numbers.
+
+## P5-E001 — runtime hardening, tracing, and tiered fallbacks
+
+- Date: 2026-08-29
+- Hypothesis: the public run can be made materially faster, and the runtime materially
+  safer, without changing a single recommendation or question.
+- Files created: `starter/runtime_config.py`, `starter/tracing.py`, `starter/allocation.py`,
+  `scripts/compare_results.py`, `tests/test_phase5_runtime.py`.
+- Files modified: `starter/agent.py`, `starter/ranking/features.py`, `starter/clarification.py`,
+  `starter/state.py`.
+
+Behavior-preserving optimizations, each verified rather than assumed:
+
+- `_phrases_present` replaced 60 boundary-anchored regular-expression searches per decoded
+  product with one contiguous n-gram membership test. The two are exactly equivalent because
+  every controlled phrase is lowercase alphanumeric words and the corpus is normalized to
+  space-joined tokens. Verified over **all 50,000 catalog products: 0 field mismatches**, with
+  decoding `4.17x` faster.
+- `_singular` memoized, `_slot_agreement` tokenizing each slot value once instead of twice,
+  scorer weights resolved once per agent instead of once per candidate, and the clarification
+  attribute lookup no longer rebuilds a ten-key mapping per product per attribute.
+
+Runtime hardening:
+
+- Tiered fallbacks: `full` -> `semantic_rerank_fallback` -> `allocation_fallback` ->
+  `clarification_fallback` -> `understanding_fallback` -> `retrieval_fused` ->
+  `retrieval_lexical` -> `previous_recommendations` -> `empty`. Every tier still returns
+  ordered, unique, non-empty-identifier recommendations.
+- `respond(...)` now self-heals a missing `reset(...)` instead of raising.
+- Per-turn production trace: route health, route candidate counts, rewritten query, state
+  patch operations, active slots, scenario, question decision, fallback tier, degraded
+  stages, and per-stage latency. It holds no target, label, or evaluator state, which is
+  asserted by a test.
+- `Agent.runtime_stats()` gained feature-cache statistics and aggregate runtime health.
+
+Commands run:
+
+```bash
+python -m unittest discover -s tests
+python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e001.json
+```
+
+Result: **byte-identical** to the local control, SHA-256
+`2AED99E0AAC422AB5A38CDB7864CF3534E2DB73FA360CE4779DDF3F21351399E`. Evaluator wall time fell
+from `152.84 s` to `102.85 s` (`-32.7%`). A later replay with the Phase 6 plumbing in place and
+`TECHJAM_FACET_DETERMINISTIC_TIES=0` reproduced the same hash again.
+
+Feature-cache sizing was measured separately, back to back, both byte-identical:
+
+| `TECHJAM_FEATURE_CACHE_SIZE` | Wall time | Peak RSS |
+|---|---:|---:|
+| `5000` (default) | `81.07 s` | `434 MiB` |
+| `20000` | `67.33 s` | `561 MiB` |
+
+Decision: **Keep**, with the default cache left at `5000`. The larger cache buys `-17%` wall
+time for `+127 MiB`, and the organizer may impose memory limits, so speed that costs memory is
+exposed as a documented knob rather than taken by default.
+
+## P5-E002 — NumPy-version-independent facet tie-breaking
+
+- Date: 2026-08-29
+- Hypothesis: the facet route's `argpartition` Top-N cut is not reproducible across NumPy
+  builds, and making it deterministic is required for a submission that will be scored on an
+  unknown host.
+- Files modified: `starter/retrieval/facets.py`, `starter/retrieval/config.py`, `starter/agent.py`.
+- Change: select the facet Top-N with a stable descending `argsort`, so tied scores resolve to
+  ascending catalog row order. The previous `argpartition` path is retained behind
+  `TECHJAM_FACET_DETERMINISTIC_TIES=0` as the exact control.
+
+Facet scores are sums of field weight times IDF over matched facet tokens, so large groups of
+products score identically and the Top-100 boundary falls inside a tie. `argpartition` resolves
+that boundary arbitrarily and differently per NumPy build; the stable sort resolves it the same
+way everywhere.
+
+```bash
+TECHJAM_FACET_DETERMINISTIC_TIES=0 python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e001_replay.json
+python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e002.json
+python -m scripts.compare_results artifacts/evaluation/local_control_p4_e002.json artifacts/evaluation/p5_e002.json --brief
+```
+
+Delta versus the local control:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.120000 | +0.041308 | -1.060000 | +0.106000 | +0.093593 |
+
+Session delta: 24 new hits, **0 lost hits**, 7 better shared-hit ranks, 10 worse, 5 earlier
+shared hits, 4 later. Every scenario improves; Browsing HR@10 reaches `0.475000` and Buying
+`0.450000`.
+
+**The size of that gain is not a retrieval improvement, and the log records it as such.**
+Breaking ties toward the lowest catalog row number systematically favors the front of the
+catalog file, and the frozen catalog is not ordered neutrally: **146 of the 200 public targets
+lie in the first 1,000 of 50,000 rows** (median target row `710`, mean `7,104` against a uniform
+expectation of `25,000`). The first ~1,000 rows plausibly hold all 1,000 session targets, public
+and private, which is why the effect is expected to carry to the private split — but it is an
+artifact of how the catalog file was assembled, not evidence that low-row products are better
+answers. If the organizer reshuffles catalog order for final scoring, this reverts to an
+arbitrary but still reproducible tie order.
+
+Decision: **Keep as the Phase 5 default.** The determinism argument alone justifies it: without
+it the same submitted code scores differently on different hosts. The measured gain is recorded
+with the artifact caveat above. Deliberately ranking by catalog row order was considered and
+**rejected** — a reproducible tie-break is defensible, a row-index ranking prior is tuning to a
+dataset artifact and would not survive a reshuffled catalog.
+
+## P5-E003 — deterministic Top-K hedge allocator
+
+- Date: 2026-08-29
+- Control: P5-E002.
+- Mode: `TECHJAM_PHASE5_MODE=allocate`.
+- Policy: the first `3` slots follow the reranker exactly; later slots admit at most `2`
+  candidates per catalog product-type group, drawn from the reranked Top-50, with deferred
+  candidates appended so the Top-K is always full. Products with no group metadata are never
+  capped.
+
+```bash
+TECHJAM_PHASE5_MODE=allocate python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e003.json
+python -m scripts.compare_results artifacts/evaluation/p5_e002.json artifacts/evaluation/p5_e003.json --brief
+```
+
+Delta versus P5-E002:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| -0.055000 | +0.003585 | +0.505000 | -0.050500 | -0.036525 |
+
+Session delta: 0 new hits, **11 lost hits**, 12 better shared-hit ranks, 7 worse, 2 earlier
+shared hits, 7 later. The hedge does exactly what it was designed to do — it improves the rank
+of targets it keeps, which is why MRR edges up — but the diversity cap evicts 11 targets that
+were previously inside the Top 10, and HitRate@10 carries `0.50` of the score against MRR's
+`0.30`.
+
+Decision: **Rollback.** `TECHJAM_PHASE5_MODE` stays `trace`; the allocator code and tests are
+retained and remain reproducible with `allocate`.
+
+## P6-E001 — optional LLM semantic reranking (implemented, not scored)
+
+- Date: 2026-08-29
+- Files created: `starter/llm/__init__.py`, `starter/llm/config.py`, `starter/llm/client.py`,
+  `starter/llm/rerank.py`, `tests/test_phase6_llm.py`.
+- Files modified: `starter/agent.py`, `starter/state.py`, `starter/ranking/features.py`,
+  `starter/tracing.py`.
+- Model: `claude-opus-5` through the official `anthropic` Python SDK, adaptive thinking at
+  `low` effort, structured `json_schema` output, `12 s` timeout, `1` retry.
+- Placement: between the deterministic reranker and the Top-K allocator, over a shortlist of
+  `40` candidates, at most `3` calls per session, turns `1-8`.
+- Safety: any missing key, missing package, timeout, refusal, or malformed answer returns the
+  deterministic order and records a `semantic_rerank_fallback` tier. Model output is coerced
+  into a full permutation of the shortlist, so it can never invent, drop, or duplicate an
+  identifier. Prompts carry session state and catalog metadata only, which a test asserts.
+
+Modes: `off` (default, zero tokens, no network), `shadow` (calls the model and records the
+proposed ordering and token cost without changing the visible response), `rerank` (applies it).
+
+**Not scored.** No `ANTHROPIC_API_KEY` is available on this host, so the route was exercised
+only through an injected fake client in 18 tests, not against the public set. Reported token
+usage for every scored run in this log therefore remains `0 / 0 / 0`. Running
+`TECHJAM_PHASE6_MODE=rerank` with real credentials is the outstanding measurement.
+
+Decision: **Keep the machinery, default off.** Official scoring may run without network access,
+and the deterministic path must remain the submitted default until the LLM route is measured.
+
+## Phase 7 — one-hypothesis-at-a-time tuning
+
+- Date: 2026-08-29
+- Control: P5-E002 (`0.362989`).
+- Rule: exactly one parameter moved per run, through its documented `TECHJAM_*` override, with
+  the untouched evaluator and no target-ID knowledge.
+
+First sweep, each against P5-E002:
+
+| Run | Change | TechnicalScore | Delta | Session delta |
+|---|---|---:|---:|---|
+| P7-E001 | RRF `k` `40` | 0.368323 | +0.005334 | 3 new, 1 lost, 22 worse ranks |
+| P7-E002 | facet weight `0.75` | 0.385102 | +0.022113 | 8 new, 2 lost |
+| P7-E003 | fresh candidate limit `300` | 0.362989 | 0.000000 | byte-identical output |
+| P7-E004 | browsing discount `0.14` | 0.383297 | +0.020308 | 5 new, **0 lost**, no rank changes |
+| P7-E005 | question candidate `K` `50` | 0.361819 | -0.001170 | 5 new, 6 lost |
+
+P7-E003 producing a byte-identical file is a useful negative result: the fused Top-200 is not
+the binding constraint, so widening the candidate pool cannot help. P7-E001 raises HitRate but
+lowers MRR through 22 worse shared-hit ranks, and P7-E005 trades hits for ranks; both were
+rolled back. P7-E004 is a clean gain — five extra Browsing hits, nothing lost, no rank moved —
+and stacks additively with the facet weight, so it is kept.
+
+### The facet-weight sweep, and why the highest score was not selected
+
+Facet weight kept improving as it rose, well past any weight a retrieval designer would
+choose:
+
+| Facet weight | With deterministic ties (P5-E002 base) | With the old arbitrary tie order |
+|---:|---:|---:|
+| 0.55 | 0.362989 | 0.269396 |
+| 0.75 | 0.385102 | — |
+| **0.95** | **0.403381** | **0.304774** |
+| 1.20 | 0.441403 | 0.293074 |
+| 1.60 | 0.469452 | 0.291945 |
+| 2.50 | 0.494176 | 0.301146 |
+
+The right-hand column is the diagnostic. With tie order held arbitrary, the facet weight peaks
+near `0.95` (`+0.035` over the `0.55` control) and is flat noise above it. With deterministic
+ties the same parameter climbs monotonically to `2.50` and beyond, because a heavier facet
+route pulls in more of the catalog front, and the catalog front is where the targets are
+(P5-E002). The climb is the artifact, not the retrieval.
+
+**Selected `0.95`, the peak of the tie-order-independent curve, and explicitly declined the
+`2.50` setting that scores `0.494176` on the public set.** Weights above `0.95` buy public
+score with no evidence of better retrieval, and would collapse if the organizer reordered the
+catalog. This is the one place in this log where the highest measured number was knowingly not
+taken.
+
+### Selected combination
+
+```bash
+# P7-E009 is the shipped default; both values are now the defaults in code.
+TECHJAM_FACET_WEIGHT=0.95 TECHJAM_QUESTION_BROWSING_DISCOUNT=0.14 \
+  python -m evaluator.local_evaluator --output artifacts/evaluation/p7_e009.json
+python -m evaluator.local_evaluator --output artifacts/evaluation/p7_final.json
+```
+
+A default run with no environment overrides reproduces P7-E009 byte-for-byte, SHA-256
+`C502BD17E4F77E7E8F4501A4312ADAE9DC958F89E779FC65D79E1FD74AC24EA3`.
+
+Delta of the shipped default versus the local Phase 4 control:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.210000 | +0.061748 | -1.920000 | +0.192000 | +0.161925 |
+
+Session delta: 43 new hits, **1 lost hit**, 21 better shared-hit ranks, 24 worse, 10 earlier
+shared hits, 2 later.
+
+Question statistics under the selected policy: 222 questions, `1.11` per session, average
+question turn `1.662162`; by scenario Browsing 152, Intent Override 32, Buying 20, Boundary 18;
+by attribute feature 88, material 35, product type 33, brand 25, use case 19, category 15,
+style 4, occasion 3; 83 no-preference answers observed and respected.
+
+Final verification: `124 passed, 0 failed`. Evaluator wall time `136.75 s`. Reported token
+usage `0 / 0 / 0`. A separate micro-benchmark confirms the deterministic tie-break is not a
+latency cost: average facet Top-100 query time is `0.613 ms` deterministic against `0.601 ms`
+arbitrary.
+
 ## Template for the next evaluated change
 
 | ID | Description | HR@10 | MRR | MTTC | Efficiency | TechnicalScore | Buying | Browsing | Intent Override | Boundary | Decision |
 |---|---|---:|---:|---:|---:|---:|---|---|---|---|---|
-| P5-E001 | One Phase 5 allocation/tracing/fallback hypothesis | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Keep / Rollback |
+| P8-E001 | One evaluated hypothesis | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Keep / Rollback |
 
 For each new entry also record files changed, commands, tests, reported token use, important failure cases, regressions, and the reason for the decision.
