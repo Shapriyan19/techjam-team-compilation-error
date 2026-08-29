@@ -4,19 +4,20 @@ This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase
 
-**Phases 5, 6, and 7 are complete. The selected runtime is `P7-E009`: P5-E002 deterministic
-retrieval plus the Phase 7 facet weight `0.95` and browsing question discount `0.14`.
-Recommended TechnicalScore `0.431321` on the public set.**
+**Phase 8 (post-roadmap): question-policy repair. The selected runtime is `P8-E005`.
+Recommended TechnicalScore `0.599939`, HitRate@10 `0.745000` on the public set.**
 
-Phase 5 hardened the runtime: equivalence-preserving speedups (`-32.7%` wall time, byte-identical
-output), a per-turn production trace, and a nine-tier fallback ladder that always returns valid
-unique recommendations. It then fixed a genuine reproducibility defect — the facet Top-N cut
-depended on how a NumPy build partitions tied scores — and evaluated a Top-K hedge allocator,
-which was rolled back. Phase 6 added an optional Claude Opus 5 semantic reranker over a 30–50
-candidate shortlist; it is off by default, requires no credentials, and falls back
-deterministically. Phase 7 tuned one parameter at a time and deliberately declined the
-highest-scoring setting it found, because a diagnostic showed that setting was exploiting how the
-catalog file is ordered rather than retrieving better.
+Phase 8 began as work on the clarification policy and found a defect first. In 28 of 200 sessions
+the rewritten retrieval query became empty and stayed empty; all 28 failed. Repairing that
+(`P8-E001`) added 9 hits. Instrumenting the remaining question gates then showed the turn-threshold
+schedule made questions arithmetically impossible from turn 7 onward, and that the gate has no
+justification under this response contract, because recommendations are returned on the same turn
+whether or not a question is asked. Removing that gate and its two relatives (`P8-E003`, `P8-E004`,
+`P8-E005`) added 34 more. Total: **43 new hits, 0 lost hits, 0 rank or turn regressions** against
+the `P7-E009` control.
+
+Phases 0–7 remain as previously recorded. Phase 6 is still implemented but **never executed against
+a real model** — the account has no API credit — so no claim is made about its effect.
 
 The official evaluator, catalog, public labels, scoring code, and split logic remain unchanged.
 
@@ -169,18 +170,17 @@ New or changed in Phases 5–7:
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| Overall | 200 | 0.530000 | 0.233736 | 6.190000 |
-| Buying | 80 | 0.537500 | 0.289752 | 5.687500 |
-| Browsing | 80 | 0.587500 | 0.236141 | 5.775000 |
-| Intent Override | 30 | 0.400000 | 0.133452 | 8.266667 |
-| Boundary | 10 | 0.400000 | 0.067222 | 7.300000 |
+| Overall | 200 | 0.745000 | 0.354462 | 4.945000 |
+| Buying | 80 | 0.737500 | 0.397212 | 4.537500 |
+| Browsing | 80 | 0.800000 | 0.338829 | 4.387500 |
+| Intent Override | 30 | 0.633333 | 0.294563 | 7.233333 |
+| Boundary | 10 | 0.700000 | 0.317222 | 5.800000 |
 
-- Overall Efficiency: `0.481000`
-- Overall recommended TechnicalScore: `0.431321`
+- Overall Efficiency: `0.605500`
+- Overall recommended TechnicalScore: `0.599939`
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
-- Tests: `124 passed, 0 failed`
-- Evaluator wall time: `136.75 s`
+- Tests: `126 passed, 0 failed`
 
-Against the local Phase 4 control (`0.269396`): HR@10 `+0.210000`, MRR `+0.061748`,
-MTTC `-1.920000`, Efficiency `+0.192000`, TechnicalScore `+0.161925`, from 43 new hits and 1 lost
-hit. Roughly `0.09` of that total is attributable to the catalog-order artifact described above.
+Versus the `P7-E009` control (`0.431321`), TechnicalScore is `+0.168618` with 43 new hits and no
+lost hits. Retrieval recall measured over the public set is `191/200`, so the current ceiling for
+ranking work is HitRate@10 `0.955`.

@@ -31,13 +31,25 @@ class PhaseFourConfig:
     minimum_coverage: float = 0.10
     minimum_uncertainty: float = 0.45
     maximum_top_confidence: float = 0.35
-    early_threshold: float = 0.40
-    middle_threshold: float = 0.55
-    late_threshold: float = 0.72
+    # Turn thresholds are 0 by default: asking is free, because recommendations
+    # go out on the same turn either way. The real filtering happens per
+    # attribute (coverage, already-asked, already-known, no-preference), so a
+    # turn-cost gate on top of that only suppressed useful questions. Kept
+    # configurable to reproduce the earlier rising schedule (0.40/0.55/0.72).
+    early_threshold: float = 0.0
+    middle_threshold: float = 0.0
+    late_threshold: float = 0.0
     known_attribute_increment: float = 0.06
-    buying_threshold_increment: float = 0.12
+    # Was 0.12 to stop Buying sessions "wasting" a turn on a question. Same
+    # reasoning as the thresholds above: the turn is spent either way, and
+    # holding back cost Buying ~9 hits on the public set.
+    buying_threshold_increment: float = 0.0
     browsing_threshold_discount: float = 0.14  # P7-E004
     max_known_attributes: int = 4
+    # Turn at which questions stop. Asking through turn 9 is worthwhile because
+    # the answer still shapes the turn-10 query; asking on turn 10 is not,
+    # since the session ends before any reply arrives.
+    last_question_turn: int = 10
     score_weights: QuestionScoreWeights = QuestionScoreWeights()
 
     def __post_init__(self) -> None:
@@ -58,6 +70,8 @@ class PhaseFourConfig:
                 raise ValueError(f"{name} must be between 0 and 1")
         if self.max_known_attributes < 1:
             raise ValueError("max_known_attributes must be positive")
+        if not 1 <= self.last_question_turn <= 11:
+            raise ValueError("last_question_turn must be between 1 and 11")
         if self.score_weights.total <= 0.0:
             raise ValueError("question score weights must have positive total")
 
@@ -77,13 +91,14 @@ class PhaseFourConfig:
             minimum_coverage=_environment_float("TECHJAM_QUESTION_MIN_COVERAGE", 0.10),
             minimum_uncertainty=_environment_float("TECHJAM_QUESTION_MIN_UNCERTAINTY", 0.45),
             maximum_top_confidence=_environment_float("TECHJAM_QUESTION_MAX_CONFIDENCE", 0.35),
-            early_threshold=_environment_float("TECHJAM_QUESTION_EARLY_THRESHOLD", 0.40),
-            middle_threshold=_environment_float("TECHJAM_QUESTION_MIDDLE_THRESHOLD", 0.55),
-            late_threshold=_environment_float("TECHJAM_QUESTION_LATE_THRESHOLD", 0.72),
+            early_threshold=_environment_float("TECHJAM_QUESTION_EARLY_THRESHOLD", 0.0),
+            middle_threshold=_environment_float("TECHJAM_QUESTION_MIDDLE_THRESHOLD", 0.0),
+            late_threshold=_environment_float("TECHJAM_QUESTION_LATE_THRESHOLD", 0.0),
             known_attribute_increment=_environment_float("TECHJAM_QUESTION_KNOWN_INCREMENT", 0.06),
-            buying_threshold_increment=_environment_float("TECHJAM_QUESTION_BUYING_INCREMENT", 0.12),
+            buying_threshold_increment=_environment_float("TECHJAM_QUESTION_BUYING_INCREMENT", 0.0),
             browsing_threshold_discount=_environment_float("TECHJAM_QUESTION_BROWSING_DISCOUNT", 0.14),
             max_known_attributes=_environment_int("TECHJAM_QUESTION_MAX_KNOWN", 4),
+            last_question_turn=_environment_int("TECHJAM_QUESTION_LAST_TURN", 10),
             score_weights=QuestionScoreWeights(
                 information_gain=_environment_float("TECHJAM_QUESTION_WEIGHT_IG", 0.20),
                 coverage=_environment_float("TECHJAM_QUESTION_WEIGHT_COVERAGE", 0.05),

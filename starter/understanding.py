@@ -362,6 +362,12 @@ def parse_message(message: str, turn: int, state: SessionState) -> ParsedMessage
 
 def update_state_from_message(state: SessionState, message: str, turn: int) -> ParsedMessage:
     state.observe_message(turn, message)
+    if not is_non_clue_message(message):
+        # Keep the newest message that says something, so a later run of
+        # non-clue replies still has content to fall back on.
+        retained = _clean_free_text(state, message)
+        if retained:
+            state.retained_query_text = retained
     if NO_PREFERENCE_RE.search(message):
         state.record_no_preference_for_last_question()
     parsed = parse_message(message, turn, state)
@@ -398,14 +404,8 @@ def rewrite_query(state: SessionState) -> str:
         fragments.append(f"under {_format_number(maximum.value)}")
 
     latest = state.latest_message
-    is_non_clue = bool(REJECTION_RE.search(latest) or NO_PREFERENCE_RE.search(latest))
-    if latest and not is_non_clue:
-        fallback = latest
-        for values in state.negative_preferences.values():
-            for value in values:
-                fallback = re.sub(re.escape(value), " ", fallback, flags=re.IGNORECASE)
-        fallback = DISCOURSE_RE.sub(" ", fallback)
-        fallback = " ".join(fallback.split()).strip(" ,.;:-")
+    if latest and not is_non_clue_message(latest):
+        fallback = _clean_free_text(state, latest)
         if fallback:
             fragments.append(fallback)
 
@@ -417,8 +417,28 @@ def rewrite_query(state: SessionState) -> str:
         if compact and key not in seen:
             seen.add(key)
             unique.append(compact)
-    state.rewritten_query = " ".join(unique)
+
+    # Nothing survived this turn: no slot was ever filled and the newest message
+    # is a non-clue. Fall back to the last message that carried content, rather
+    # than searching for the empty string and stranding the session.
+    query = " ".join(unique) or state.retained_query_text
+    state.rewritten_query = query
     return state.rewritten_query
+
+
+def is_non_clue_message(message: str) -> bool:
+    """True for replies that carry no search signal, e.g. 'no preference'."""
+    return bool(REJECTION_RE.search(message) or NO_PREFERENCE_RE.search(message))
+
+
+def _clean_free_text(state: SessionState, text: str) -> str:
+    """Strip discourse filler and anything the shopper has explicitly ruled out."""
+    cleaned = text
+    for values in state.negative_preferences.values():
+        for value in values:
+            cleaned = re.sub(re.escape(value), " ", cleaned, flags=re.IGNORECASE)
+    cleaned = DISCOURSE_RE.sub(" ", cleaned)
+    return " ".join(cleaned.split()).strip(" ,.;:-")
 
 
 def _singleton_slot_patches(

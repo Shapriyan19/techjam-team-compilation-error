@@ -232,7 +232,7 @@ class ConservativeQuestionPolicy:
     def decide(self, analysis: QuestionAnalysis, state: SessionState) -> QuestionDecision:
         if not self.config.asks_questions:
             return QuestionDecision(None, None, None, None, "question behavior disabled")
-        if state.turn >= 9:
+        if state.turn >= self.config.last_question_turn:
             return QuestionDecision(None, None, None, None, "turn-cost cutoff")
         if analysis.candidate_count < 2:
             return QuestionDecision(None, None, None, None, "insufficient candidates")

@@ -43,6 +43,10 @@ This document answers: **What changes improved or worsened the score?**
 | P7-E010 | Facet weight `1.20` | 0.545000 | 0.221677 | 5.880000 | 0.512000 | 0.441403 | 0.650000 / 0.309474 / 4.537500 | 0.512500 / 0.186974 / 6.212500 | 0.366667 / 0.121481 / 8.466667 | 0.500000 / 0.097500 / 6.200000 | Rejected: artifact-driven |
 | P7-E011 | Facet weight `1.60` | 0.575000 | 0.243841 | 5.560000 | 0.544000 | 0.469452 | 0.675000 / 0.314544 / 4.312500 | 0.562500 / 0.220997 / 5.625000 | 0.333333 / 0.121944 / 8.733333 | 0.600000 / 0.226667 / 5.500000 | Rejected: artifact-driven |
 | P7-E013 | Facet weight `2.50` | 0.615000 | 0.232921 | 5.160000 | 0.584000 | 0.494176 | 0.700000 / 0.330516 / 4.037500 | 0.637500 / 0.183507 / 4.887500 | 0.366667 / 0.107077 / 8.500000 | 0.500000 / 0.225000 / 6.300000 | Rejected: artifact-driven |
+| P8-E001 | Retain last content-bearing message so a run of non-clue replies cannot empty the query | 0.575000 | 0.260700 | 5.865000 | 0.513500 | 0.468410 | 0.537500 / 0.289752 / 5.687500 | 0.687500 / 0.291052 / 5.037500 | 0.400000 / 0.133452 / 8.266667 | 0.500000 / 0.167222 / 6.700000 | Keep/default |
+| P8-E003 | Flat question thresholds `0.0` in place of the rising `0.40/0.55/0.72` schedule | 0.700000 | 0.340728 | 5.100000 | 0.590000 | 0.570218 | 0.637500 / 0.364960 / 4.912500 | 0.800000 / 0.338829 / 4.387500 | 0.600000 / 0.289008 / 7.266667 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
+| P8-E004 | Buying threshold increment `0.12` -> `0.0` | 0.735000 | 0.353073 | 4.955000 | 0.604500 | 0.594322 | 0.725000 / 0.395823 / 4.550000 | 0.800000 / 0.338829 / 4.387500 | 0.600000 / 0.289008 / 7.266667 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
+| P8-E005 | Allow questions through turn 9 (`last_question_turn` 9 -> 10) | 0.745000 | 0.354462 | 4.945000 | 0.605500 | 0.599939 | 0.737500 / 0.397212 / 4.537500 | 0.800000 / 0.338829 / 4.387500 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 
 ## P0-E000 — untouched starter baseline
 
@@ -639,6 +643,86 @@ Final verification: `124 passed, 0 failed`. Evaluator wall time `136.75 s`. Repo
 usage `0 / 0 / 0`. A separate micro-benchmark confirms the deterministic tie-break is not a
 latency cost: average facet Top-100 query time is `0.613 ms` deterministic against `0.601 ms`
 arbitrary.
+
+## P8 — empty-query repair and question-policy recalibration
+
+- Date: 2026-08-29
+- Control: `P7-E009` (`artifacts/evaluation/p7_e009_control.json`), HR@10 `0.530000`, TechnicalScore `0.431321`.
+- Files modified: `starter/state.py`, `starter/understanding.py`, `starter/clarification.py`,
+  `starter/clarification_config.py`, `tests/test_phase1_state.py`, `tests/test_phase4_clarification.py`.
+- Tests: `126 passed, 0 failed`.
+
+### P8-E001 — the query could go empty, and those sessions never recovered
+
+Diagnosis, not tuning. Instrumenting `phase4_turn_history` showed **226 of 1,144 turns (19.8%)
+issued an empty retrieval query**, across 28 sessions. Those 28 sessions hit **0/28**; the other
+172 hit `0.616`.
+
+Cause: `rewrite_query` fed retrieval from active slots plus a sanitized copy of the *latest*
+message. When the opening message named a category the lexicon does not cover (`Rompers &
+Overalls`, `Croslite`), no slot was ever filled, so the query lived only in that latest-message
+fallback. Every subsequent simulator reply is a non-clue (`I don't have an additional preference
+for brand.`, `Those options are not quite right yet.`), which suppresses the fallback by design —
+leaving nothing at all. Retrieval then returned no candidates, the question policy refused to ask
+because it saw fewer than two candidates, and the refusal guaranteed another non-clue reply. The
+session could not escape.
+
+Fix: `SessionState.retained_query_text` holds the newest message that carried content, recorded in
+`update_state_from_message` so it does not depend on `rewrite_query` being called. `rewrite_query`
+uses it **only when the turn would otherwise produce an empty string**, which makes the change
+strictly additive — no session that already produced a non-empty query can change.
+
+Result: empty queries `226 -> 0`; the `insufficient candidates` question blocker `174 -> 0`.
+Session delta versus control: **9 new hits, 0 lost, 0 rank or turn regressions.**
+
+### P8-E003 — the turn thresholds made late questions arithmetically impossible
+
+Measuring the best available question score per turn against the threshold it had to clear:
+
+| Turn | median best score | max | threshold |
+|---|---:|---:|---:|
+| 1–3 | 0.40 | 0.82 | 0.40 |
+| 4–6 | 0.37 | 0.62 | 0.55 |
+| 7–10 | 0.37 | 0.565 | **0.72** |
+
+From turn 7 the maximum attainable score was below the threshold, so no question could ever be
+asked. Sweeping a flat threshold produced a **monotone** improvement with no interior peak —
+`0.40 -> 0.595`, `0.35 -> 0.620`, `0.30 -> 0.645`, `0.15 -> 0.660`, `0.10 -> 0.680`, `0.0 -> 0.700`
+HR@10 — which is why this is recorded as a miscalibration rather than a tuned optimum: the data say
+the gate should not exist. It should not: recommendations are returned on the same turn either way,
+so a question has no turn cost. The real filtering already happens per attribute (coverage,
+already-asked, already-known, no-preference). The rising schedule is retained behind the existing
+environment variables to reproduce earlier phases.
+
+### P8-E004 and P8-E005 — the same reasoning applied twice more
+
+`buying_threshold_increment` (`0.12 -> 0.0`) existed to stop Buying sessions spending a turn on a
+question; by the argument above there is no turn to spend. Buying HR@10 `0.637500 -> 0.725000`.
+
+`last_question_turn` (`9 -> 10`) lets turn 9 ask, since its answer still shapes the turn-10 query.
+Turn 10 remains silent because the session ends before any reply arrives — `11` scores identically
+to `10`, confirming that. Worth 2 further hits.
+
+### Combined result
+
+| | control | P8-E005 | delta |
+|---|---:|---:|---:|
+| HR@10 | 0.530000 | 0.745000 | +0.215000 |
+| MRR | 0.233736 | 0.354462 | +0.120726 |
+| MTTC | 6.190000 | 4.945000 | -1.245000 |
+| Efficiency | 0.481000 | 0.605500 | +0.124500 |
+| TechnicalScore | 0.431321 | 0.599939 | +0.168618 |
+
+Session delta versus control: **43 new hits, 0 lost hits, 2 better ranks, 0 worse ranks, 0 earlier
+or later shared-hit turns.** Every scenario improves: Buying `0.362500 -> 0.737500`, Browsing
+`0.587500 -> 0.800000`, Intent Override `0.400000 -> 0.633333`, Boundary `0.400000 -> 0.700000`.
+
+Questions now fire on `796` of `938` decision turns versus `222` of `1,144` before. Nothing in the
+evaluator, catalog, labels, or scoring changed, and no public target is referenced by the runtime.
+
+Caveat: P8-E001 is a defect repair and should generalize. P8-E003/E004/E005 remove gates whose
+justification does not hold under this response contract; the direction is principled, but the
+exact public-set magnitude will not transfer verbatim to the private split.
 
 ## Template for the next evaluated change
 

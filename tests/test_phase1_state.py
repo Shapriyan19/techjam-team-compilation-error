@@ -104,6 +104,26 @@ class PhaseOneStateTest(unittest.TestCase):
         self.assertIn("black", query)
         self.assertNotIn("options", query)
 
+    def test_unparsed_opening_survives_a_run_of_non_clue_replies(self) -> None:
+        # "Rompers & Overalls" matches no category lexicon entry, so the opening
+        # message only ever reaches retrieval through the latest-message fallback.
+        # Non-clue replies suppress that fallback and used to empty the query.
+        state = self.state_after(
+            "I'm looking for Rompers & Overalls Rompers, but I'm still exploring.",
+            "I don't have an additional preference for brand.",
+        )
+        self.assertIn("rompers", rewrite_query(state).casefold())
+
+        state.observe_message(3, "Those options are not quite right yet.")
+        self.assertIn("rompers", rewrite_query(state).casefold())
+
+    def test_retained_text_never_overrides_a_real_query(self) -> None:
+        state = self.state_after("blue running shoes", "Actually, I want black boots instead.")
+        query = rewrite_query(state).casefold()
+
+        self.assertIn("boots", query)
+        self.assertNotIn("running", query)
+
 
 class AgentPhaseOneIntegrationTest(unittest.TestCase):
     def test_reset_replaces_state_and_sessions_do_not_leak(self) -> None:

@@ -225,13 +225,13 @@ class ConservativeQuestionPolicyTest(unittest.TestCase):
 
         self.assertIsNone(decision.api_attribute)
 
-    def test_turn_nine_does_not_ask(self) -> None:
+    def test_turn_nine_still_asks(self) -> None:
+        # A turn-9 answer still reaches the turn-10 query, so it is worth asking.
         decision = ConservativeQuestionPolicy(self.config()).decide(
             _analysis(), self.state(9)
         )
 
-        self.assertIsNone(decision.api_attribute)
-        self.assertEqual(decision.reason, "turn-cost cutoff")
+        self.assertIsNotNone(decision.api_attribute)
 
     def test_turn_ten_does_not_ask(self) -> None:
         decision = ConservativeQuestionPolicy(self.config()).decide(

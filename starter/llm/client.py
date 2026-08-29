@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from starter.llm.config import PhaseSixConfig
@@ -24,6 +25,25 @@ ORDER_SCHEMA = {
 
 class LLMUnavailable(RuntimeError):
     """Raised when no model can be reached; the caller must fall back."""
+
+
+def _profile_credentials_exist() -> bool:
+    """Detect an `ant auth login` profile, which the SDK resolves without an env var."""
+    configured = os.getenv("ANTHROPIC_CONFIG_DIR")
+    config_dir = Path(configured) if configured else Path.home() / ".config" / "anthropic"
+    credentials = config_dir / "credentials"
+    return credentials.is_dir() and any(credentials.glob("*.json"))
+
+
+def credentials_available(config: PhaseSixConfig) -> bool:
+    """True when either an explicit API key or a stored OAuth profile is present.
+
+    Checked before construction so a credential-less run degrades immediately
+    instead of paying a network timeout on every turn.
+    """
+    if os.getenv(config.api_key_variable):
+        return True
+    return bool(os.getenv("ANTHROPIC_AUTH_TOKEN")) or _profile_credentials_exist()
 
 
 @dataclass(frozen=True)
@@ -50,8 +70,10 @@ class AnthropicRerankClient:
 
     def __init__(self, config: PhaseSixConfig) -> None:
         self.config = config
-        if not os.getenv(config.api_key_variable):
-            raise LLMUnavailable(f"{config.api_key_variable} is not set")
+        if not credentials_available(config):
+            raise LLMUnavailable(
+                f"no credentials: set {config.api_key_variable} or run `ant auth login`"
+            )
         try:
             import anthropic
         except ImportError as exc:
