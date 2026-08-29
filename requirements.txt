@@ -1,2 +1,12 @@
-# Matches the artifact build/runtime and requires Python >=3.11.
-numpy==2.3.5
+# NumPy is the only third-party dependency of the default offline runtime and
+# requires Python >=3.11. The packaged retrieval artifacts were built on 2.3.5;
+# Phases 5-7 were measured on 2.4.6, because 2.3.5 publishes no wheel for
+# Python 3.14. P5-E002 removed the NumPy tie-partitioning dependency that made
+# those two versions score differently, so the range is safe for the active
+# lexical + facet path. Pin to ==2.3.5 if you also enable the dense route.
+numpy>=2.3.5,<3
+
+# Optional, Phase 6 only. The default agent never imports it, makes no network
+# call, and reports zero tokens. Install and set ANTHROPIC_API_KEY only when
+# running TECHJAM_PHASE6_MODE=shadow or rerank.
+# anthropic>=0.116.0

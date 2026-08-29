@@ -111,6 +111,7 @@ class FacetRetriever:
         catalog_path: str | Path,
         *,
         validate_checksums: bool = True,
+        deterministic_ties: bool = True,
     ) -> None:
         np = _require_numpy()
         self._np = np
@@ -139,6 +140,7 @@ class FacetRetriever:
         self.idf = arrays["idf"]
         if len(self.offsets) != len(tokens) + 1:
             raise DenseArtifactError("facet offsets do not match token mapping")
+        self.deterministic_ties = deterministic_ties
         self.query_count = 0
         self.query_seconds = 0.0
 
@@ -164,12 +166,19 @@ class FacetRetriever:
         count = min(int(top_n), len(nonzero))
         if count == 0:
             return []
-        if count < len(nonzero):
-            local = self._np.argpartition(scores[nonzero], -count)[-count:]
-            candidates = nonzero[local]
+        if self.deterministic_ties:
+            # A stable descending sort keeps tied scores in ascending row order, so
+            # the Top-N boundary no longer depends on how a particular NumPy build
+            # partitions ties. This is the same order the comparison below produces.
+            local = self._np.argsort(-scores[nonzero], kind="stable")[:count]
+            ordered = nonzero[local].tolist()
         else:
-            candidates = nonzero
-        ordered = sorted(candidates.tolist(), key=lambda index: (-float(scores[index]), index))
+            if count < len(nonzero):
+                local = self._np.argpartition(scores[nonzero], -count)[-count:]
+                candidates = nonzero[local]
+            else:
+                candidates = nonzero
+            ordered = sorted(candidates.tolist(), key=lambda index: (-float(scores[index]), index))
         self.query_count += 1
         self.query_seconds += time.perf_counter() - started
         return [str(self.product_ids[index]) for index in ordered]

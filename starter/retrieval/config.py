@@ -18,8 +18,12 @@ class RetrievalConfig:
     rrf_k: float = 60.0
     lexical_weight: float = 1.0
     dense_weight: float = 0.0
-    facet_weight: float = 0.55
+    # P7-E006. Chosen from the tie-order-independent sweep, where the facet route
+    # peaks near 0.95 and is flat noise above it, not from the higher public score
+    # that larger weights reach through catalog row ordering.
+    facet_weight: float = 0.95
     validate_artifact_checksums: bool = True
+    deterministic_facet_ties: bool = True
 
     def __post_init__(self) -> None:
         if self.mode not in RETRIEVAL_MODES:
@@ -40,9 +44,12 @@ class RetrievalConfig:
             rrf_k=_environment_float("TECHJAM_RRF_K", 60.0),
             lexical_weight=_environment_float("TECHJAM_LEXICAL_WEIGHT", 1.0),
             dense_weight=_environment_float("TECHJAM_DENSE_WEIGHT", 0.0),
-            facet_weight=_environment_float("TECHJAM_FACET_WEIGHT", 0.55),
+            facet_weight=_environment_float("TECHJAM_FACET_WEIGHT", 0.95),
             validate_artifact_checksums=os.getenv(
                 "TECHJAM_VALIDATE_ARTIFACT_CHECKSUMS", "1"
+            ).strip().casefold() not in {"0", "false", "no"},
+            deterministic_facet_ties=os.getenv(
+                "TECHJAM_FACET_DETERMINISTIC_TIES", "1"
             ).strip().casefold() not in {"0", "false", "no"},
         )
 
