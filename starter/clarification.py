@@ -37,6 +37,21 @@ API_ATTRIBUTES = {
     "feature": "feature",
 }
 
+# One reader per askable attribute keeps the per-candidate lookup free of the
+# per-product mapping that used to be rebuilt for every attribute.
+ATTRIBUTE_READERS = {
+    "category": lambda product: product.category_values,
+    "product_type": lambda product: product.product_type_values,
+    "use_case": lambda product: product.use_case_values,
+    "brand": lambda product: product.brand_values,
+    "color": lambda product: tuple(sorted(product.color_terms)),
+    "material": lambda product: tuple(sorted(product.material_terms)),
+    "size_fit": lambda product: product.size_fit_values,
+    "style": lambda product: product.style_values,
+    "occasion": lambda product: product.occasion_values,
+    "feature": lambda product: product.feature_values,
+}
+
 QUESTION_TEMPLATES = {
     "category": "What type of item are you looking for?",
     "product_type": "What specific type of product are you looking for?",
@@ -285,25 +300,8 @@ def _attribute_values(
 ) -> list[tuple[str, ...]]:
     if attribute == "budget":
         return _budget_bands(products)
-    result: list[tuple[str, ...]] = []
-    for product in products:
-        if product is None:
-            result.append(())
-            continue
-        mapping = {
-            "category": product.category_values,
-            "product_type": product.product_type_values,
-            "use_case": product.use_case_values,
-            "brand": product.brand_values,
-            "color": tuple(sorted(product.color_terms)),
-            "material": tuple(sorted(product.material_terms)),
-            "size_fit": product.size_fit_values,
-            "style": product.style_values,
-            "occasion": product.occasion_values,
-            "feature": product.feature_values,
-        }
-        result.append(tuple(mapping[attribute]))
-    return result
+    read = ATTRIBUTE_READERS[attribute]
+    return [() if product is None else tuple(read(product)) for product in products]
 
 
 def _budget_bands(products: Sequence[ProductFeatures | None]) -> list[tuple[str, ...]]:
