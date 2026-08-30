@@ -21,7 +21,14 @@ class PersistenceWeights:
 
 @dataclass(frozen=True)
 class FeatureWeights:
-    retrieval_rank: float = 1.0
+    # Lowered from 1.0 after the P11 fragment layer and P10-E002 retrieval fix
+    # landed. Miss decomposition showed the rank-1 item was beating the target
+    # almost entirely on retrieval_rank (+0.54 average) while the target won on
+    # every semantic feature - BM25 order was overriding what the shopper
+    # actually said. P9 tested lowering this and it hurt, but that was before
+    # the semantic features were strong enough to carry the ranking.
+    # HR@10 is flat at 0.935 across 0.55-0.60 and falls outside that band.
+    retrieval_rank: float = 0.58
     route_support: float = 0.08
     # "binary" (default) awards the same bonus for any candidate seen by 2+
     # routes regardless of how strongly each route ranked it. "continuous"
@@ -99,7 +106,7 @@ class PhaseThreeConfig:
                 contradiction_penalty=_environment_float("TECHJAM_CONTRADICTION_PENALTY", 10.0),
             ),
             feature_weights=FeatureWeights(
-                retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 1.0),
+                retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 0.58),
                 route_support=_environment_float("TECHJAM_FEATURE_ROUTE_SUPPORT", 0.08),
                 route_support_mode=os.getenv("TECHJAM_ROUTE_SUPPORT_MODE", "binary").strip().casefold(),
                 category=_environment_float("TECHJAM_FEATURE_CATEGORY", 0.18),
