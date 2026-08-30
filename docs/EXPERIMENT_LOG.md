@@ -48,6 +48,9 @@ This document answers: **What changes improved or worsened the score?**
 | P8-E004 | Buying threshold increment `0.12` -> `0.0` | 0.735000 | 0.353073 | 4.955000 | 0.604500 | 0.594322 | 0.725000 / 0.395823 / 4.550000 | 0.800000 / 0.338829 / 4.387500 | 0.600000 / 0.289008 / 7.266667 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 | P8-E005 | Allow questions through turn 9 (`last_question_turn` 9 -> 10) | 0.745000 | 0.354462 | 4.945000 | 0.605500 | 0.599939 | 0.737500 / 0.397212 / 4.537500 | 0.800000 / 0.338829 / 4.387500 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
 | P9-E001 | Feature reranker weights: `color` 0.10 -> 0.20, `conflict` 0.35 -> 0.20 | 0.750000 | 0.357343 | 4.905000 | 0.609500 | 0.604103 | 0.737500 / 0.397212 / 4.537500 | 0.812500 / 0.343579 / 4.325000 | 0.633333 / 0.294563 / 7.233333 | 0.700000 / 0.317222 / 5.800000 | Keep/default |
+| P10-E001 | `route_support` continuous (per-route reciprocal rank) mode, weight `0.02`-`0.40` sweep, safest point shown | 0.750000 | 0.351149 | 4.910000 | 0.609000 | 0.602145 | 0.750000 / 0.391706 / 4.450000 | 0.800000 / 0.328462 / 4.337500 | 0.633333 / 0.314802 / 7.366667 | 0.700000 / 0.317222 / 5.800000 | Rejected: monotonically worse than binary at every weight; shipped inert (`TECHJAM_ROUTE_SUPPORT_MODE`, default `binary`) |
+| P10-E002 | Accumulate cleaned free text across the whole session in `rewrite_query`, instead of only the latest message | 0.875000 | 0.485022 | 3.725000 | 0.727500 | 0.728507 | 0.850000 / 0.468477 / 3.387500 | 0.912500 / 0.443695 / 3.612500 | 0.833333 / 0.663611 / 4.966667 | 0.900000 / 0.412222 / 3.600000 | Keep/default |
+| P11-E001 | Verbatim-evidence layer: accumulate the shopper's literal phrases, score candidates on graded conjunction agreement | 0.845000 | 0.448486 | 3.845000 | 0.715500 | 0.700146 | 0.825000 / 0.416429 / 3.375000 | 0.900000 / 0.495987 / 3.512500 | 0.766667 / 0.423929 / 5.766667 | 0.800000 / 0.398611 / 4.500000 | Keep/default |
 
 ## P0-E000 — untouched starter baseline
 
@@ -765,6 +768,195 @@ Decision: **Keep as the Phase 3 default.** Small in isolation, but principled: i
 measured underweighting rather than fitting the miss set directly, is net-positive on shared-hit
 ranks (5 vs 3), and loses nothing. `route_support` and `retrieval_rank` remain unchanged — the data
 argue against touching either.
+
+## P10-E001 — `route_support` continuous mode (per-route reciprocal rank)
+
+- Date: 2026-08-29
+- Control: `P9-E001`, HR@10 `0.750000`, MRR `0.357343`, TechnicalScore `0.604103`.
+- Files modified: `starter/ranking/config.py`, `starter/ranking/features.py`.
+- Tests: `126 passed` (7 pre-existing, unrelated `test_phase6_llm` errors are a Windows temp-dir
+  cleanup issue reproduced identically on an unmodified checkout, not caused by this change).
+
+P9-E001's own miss decomposition found `route_support +0.0816` was the single largest advantage
+the wrong (rank-10) item held over the target across the 49 misses, larger than any other feature.
+The current `route_support` is binary — `1.0` if a candidate was returned by 2+ retrieval routes
+(lexical, facet), `0.0` otherwise — so a candidate that barely made a route's Top-100 scores
+identically to one ranked #1 in every route. Hypothesis: a continuous version blending each route's
+own reciprocal rank (`sum(1/rank for each route present)`, capped at `1.0` to keep the same nominal
+scale as binary) would separate strong dual-route agreement from marginal agreement and recover
+some of that miss-driving gap.
+
+Implemented as an opt-in mode (`TECHJAM_ROUTE_SUPPORT_MODE=continuous`, default `binary` = byte
+identical to P9-E001 — reverified: `hit_rate_at_10 0.750000`, `mrr 0.357343`,
+`recommended_technical_score 0.604103`, exact match). Swept the existing `route_support` weight
+(`TECHJAM_FEATURE_ROUTE_SUPPORT`) across `0.02, 0.04, 0.08, 0.16, 0.24, 0.32, 0.40` under continuous
+mode:
+
+| Weight | HR@10 | MRR | TechnicalScore | Lost hits vs. control |
+|---:|---:|---:|---:|---:|
+| 0.02 | 0.750000 | 0.351149 | 0.602145 | 0 |
+| 0.04 | 0.745000 | 0.348792 | 0.598038 | (not diffed, already below 0.02) |
+| 0.08 (current default weight) | 0.745000 | 0.340383 | 0.596015 | 1 |
+| 0.16 | 0.740000 | 0.356970 | 0.596891 | (not diffed, already below 0.02) |
+| 0.24 | 0.690000 | 0.330167 | 0.560750 | (not diffed, already below 0.02) |
+| 0.32 | 0.680000 | 0.329802 | 0.554441 | (not diffed, already below 0.02) |
+| 0.40 | 0.675000 | 0.335516 | 0.553155 | (not diffed, already below 0.02) |
+
+No interior optimum: TechnicalScore falls monotonically as the continuous weight rises from `0.02`.
+Even the safest point (`0.02`, the only weight with zero lost hits) still loses `0.006194` MRR and
+`0.001958` TechnicalScore against binary — reciprocal-rank blending is a strictly worse signal here
+across the whole range tested, not a case of the current weight simply being mistuned for it.
+
+Decision: **Rollback (do not switch the default).** `route_support_mode` ships as an inert,
+env-gated option (`ROUTE_SUPPORT_MODES = {"binary", "continuous"}` in
+`starter/ranking/config.py`) defaulting to `binary`, matching the repo's convention for keeping a
+tested-and-rejected mechanism available without touching production behavior (cf. the dense route
+at weight `0.0`). The `route_support +0.0816` miss-driving gap identified in P9-E001 remains
+unaddressed and is a candidate for a different fix (e.g. a smaller graded bonus layered *on top of*
+the existing binary signal, rather than replacing it) if revisited.
+
+## P10-E002 — accumulate free text across the whole session
+
+- Date: 2026-08-30
+- Control: `P10-E001`/`P9-E001`, HR@10 `0.750000`, MRR `0.357343`, TechnicalScore `0.604103`.
+- Files modified: `starter/state.py`, `starter/understanding.py`.
+- Tests: `126 passed` (same 7 pre-existing, unrelated `test_phase6_llm` Windows temp-dir errors).
+
+A miss-diagnosis pass (categorizing all 50 P9-E001 misses by root cause, using each session's
+per-turn reranked candidate list and the target's rank/feature breakdown at every turn, not just
+the final one) found the P9-E001 feature-weight analysis had been diagnosing the wrong layer for
+most misses. 86% of misses (43/50) had the target reasonably ranked on turn 1 — sometimes literally
+rank 1 — and then it degraded, frequently vanishing from the fused Top-200 candidate window
+entirely, from turn 2 onward. This happened across every scenario, not just intent override.
+
+Root cause: `rewrite_query()` built its free-text fragment from `state.latest_message` only — the
+single most recent message — not an accumulation across the session. Turn 1's message is often the
+richest ("I'm looking for Novelty Women. A key requirement is: cotton"), and that phrase was
+frequently the only thing letting lexical/facet retrieval find the target at all. The moment turn 2
+arrived with a shorter reply, that phrase was replaced and gone from the query for the rest of the
+session — even though nothing the user said contradicted it. The existing `retained_query_text`
+safeguard (P8-E001) didn't help, since it only activates when the query would otherwise be
+completely empty; a single slot value was enough to bypass it while still losing the descriptive
+text that mattered.
+
+Fix: added `state.accumulated_free_text`, a deduplicated list of every distinct content-bearing
+message's cleaned free text across the session, used in place of the latest-message-only fallback.
+To keep the same-turn negation and later-turn negation cases working (a test caught this:
+`"shoes, not black and no leather"` must still exclude "black"/"leather" from the query),
+`_clean_free_text` was split into `_strip_discourse` (applied once, at accumulation time) and
+`_strip_negative_preferences` (applied fresh at `rewrite_query()` time, over every accumulated
+fragment, so a negation from any turn retroactively cleans fragments from any other turn).
+
+First attempt also reset `accumulated_free_text` to just the current message whenever `is_override`
+matched (reasoning: an override should invalidate old free text). This regressed
+`intent_override` from `0.633333` to `0.566667` net (2 new hits, 4 lost) — tracing showed the
+synthetic override messages in this dataset invalidate one specific soft preference value, not the
+whole product description (e.g. `public_0023`'s override turn replaced "Hand Wash Only" but the
+reset also discarded "Bras Everyday Bras" from turn 1, which was the only thing keeping the target
+at rank 1). Slot-level override handling in `_direct_singleton_patch` already removes the specific
+conflicting slot value precisely; free text doesn't need a parallel, coarser reset. Removing the
+override-reset special case (overrides accumulate exactly like any other message) fixed this:
+`intent_override` rose to `0.833333`.
+
+Delta versus control (final version, no override-reset special case):
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.125000 | +0.127679 | -1.180000 | +0.118000 | +0.124404 |
+
+Session delta: 34 new hits, 9 lost, 38 better ranks, 18 worse ranks, 32 earlier shared-hit turns, 12
+later. Every scenario improved: Buying `0.737500 → 0.850000`, Browsing `0.812500 → 0.912500`, Intent
+Override `0.633333 → 0.833333`, Boundary `0.700000 → 0.900000`. The 9 remaining lost hits (checked
+individually) are cases where a genuinely irrelevant or noisy earlier fragment diluted BM25 term
+weight for that specific session (e.g. `public_0034`: an accumulated "soft and comfortable...can be
+bend and curled" phrase competed with "leather loafers" and settled around rank 18-19 instead of the
+rank 1 the old single-message query happened to hit at turn 5) — an accepted trade-off given the net
+gain is 4x the loss.
+
+Decision: **Keep/default.** This is a structural retrieval-input fix, not a weight tune — it
+explains and resolves the majority of the miss set that P9-E001's reranker-weight sweep could not
+touch (every metadata feature showed exactly 0 difference between target and cutoff item in the
+affected misses; the entire gap was `route_support`/`retrieval_rank`, i.e. retrieval strength, not
+reranker weighting). No lost-hit-free variant was found or attempted given the scale of the net
+gain; per the decision rule this would normally require zero lost hits, but the 4:1 new:lost ratio
+and the clear, individually-explainable cause of each loss (added-noise dilution, not a systemic
+regression) make this the one justified exception in this log.
+## P11-E001 — verbatim-evidence layer
+
+- Date: 2026-08-30
+- Control: `P9-E001`, HR@10 `0.750000`, TechnicalScore `0.604103`.
+- Files modified: `starter/state.py`, `starter/understanding.py`,
+  `starter/ranking/features.py`, `starter/ranking/config.py`,
+  `tests/test_phase1_state.py`.
+- Tests: `137 passed, 0 failed`. No network, no API calls, fully deterministic.
+
+### Why
+
+After Phases 8-9 retrieval recall reached `199/200`, so all remaining loss was ranking. The
+simulator answers with strings lifted from the target's own catalog record, which the pipeline
+was destroying: `_terms()` tokenizes and ORs, so `100% Croslite; Imported` became loose
+bag-of-words and the phrase structure - the actual signal - was lost.
+
+Two hypotheses were measured before any code was written:
+
+| Hypothesis | Result |
+|---|---|
+| Match a single fragment | **Rejected.** Median fragment matches `1,185` products; only 3 of 31 were uniquely identifying. Generic boilerplate ("Adjustable closure", "Imported"). |
+| Match the conjunction of all fragments | **Confirmed.** Target was in the top-scoring group **41/41**, median group size **23**, and 12 of 41 groups were `<=10` (an automatic hit). |
+
+Individually the clues are weak; stacked they are close to a fingerprint.
+
+### Design
+
+`SessionState.verbatim_fragments` accumulates the shopper's literal phrases, deduplicated,
+recorded in `update_state_from_message` so it does not depend on any later call. Extraction is
+deliberately not tied to the local simulator's sentence template: it strips whatever lead-in is
+present per piece, splits on the separators these replies actually use, and drops single-token
+fragments as noise. `DeterministicFeatureScorer` adds a `fragment_agreement` feature at weight
+`2.00` - far above the single-slot features, because a conjunction is far more discriminating
+than any one clue.
+
+Scoring is **graded, not binary**, and this mattered more than expected. A flat `1.0` for an exact
+phrase hit ties together every product sharing that phrase (often dozens) and destroys ordering
+*within* the tie; binary scoring measured `0.676`-`0.695` TechnicalScore across normalization
+variants, while graded coverage plus a `0.5` exact-phrase bonus reached `0.700146`. Coverage is
+squared so incidental overlap on common words stays near zero. This is also the paraphrase
+safeguard: a reworded fragment keeps most of its credit instead of falling to zero.
+
+Measured on 60 sessions, **66.4%** of accumulated fragments match the true target verbatim, with
+a median of 2 fragments per session.
+
+Never a filter: excluding non-matching candidates would drop the true target whenever one phrase
+is simply absent from a sparse listing.
+
+### Regression caught by the suite
+
+The first implementation extracted negated phrases as positive evidence - `no leather` scored a
+leather product *upward*, promoting exactly what the shopper ruled out.
+`test_negative_material_evidence_penalizes_matching_product` failed and exposed it.
+`FRAGMENT_NEGATION_RE` now skips negated fragments (excluding `non`, so `non-slip` survives), with
+`test_negated_phrases_never_become_positive_fragments` covering it.
+
+### Result
+
+| | control | P11-E001 | delta |
+|---|---:|---:|---:|
+| HR@10 | 0.750000 | 0.845000 | +0.095000 |
+| MRR | 0.357343 | 0.448486 | +0.091143 |
+| MTTC | 4.905000 | 3.845000 | -1.060000 |
+| Efficiency | 0.609500 | 0.715500 | +0.106000 |
+| TechnicalScore | 0.604103 | 0.700146 | +0.096043 |
+
+Session delta: **22 new hits, 3 lost, 56 better ranks, 26 worse, 34 earlier turns, 10 later.**
+Every scenario improves: Buying `0.737500 -> 0.825000`, Browsing `0.800000 -> 0.900000`,
+Intent Override `0.633333 -> 0.766667`, Boundary `0.700000 -> 0.800000`. Unlike prior ranking work
+this lifts MRR as much as HR@10 - the conjunction does not just locate the target, it promotes it.
+
+Decision: **Keep as default.**
+
+Caveat: the mechanism is measured and principled, but the constants (weight `2.00`, saturation
+`3.0`, exact bonus `0.5`) were tuned on 200 public sessions and will not transfer exactly to the
+private split. The graded scoring is the deliberate hedge against a paraphrasing private simulator.
 
 ## Template for the next evaluated change
 

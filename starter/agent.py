@@ -14,6 +14,8 @@ from starter.clarification import (
 from starter.clarification_config import PhaseFourConfig
 from starter.llm.client import AnthropicRerankClient, RerankClient
 from starter.llm.config import PhaseSixConfig
+from starter.llm.gemini_client import GeminiRerankClient
+from starter.llm.nvidia_client import NvidiaRerankClient
 from starter.llm.rerank import SemanticReranker
 from starter.ranking.config import PhaseThreeConfig
 from starter.ranking.evidence import (
@@ -251,8 +253,12 @@ class Agent:
             return
         client = self._injected_rerank_client
         if client is None:
+            client_class = {
+                "gemini": GeminiRerankClient,
+                "nvidia": NvidiaRerankClient,
+            }.get(self.phase6_config.provider, AnthropicRerankClient)
             try:
-                client = AnthropicRerankClient(self.phase6_config)
+                client = client_class(self.phase6_config)
             except Exception as exc:
                 self.semantic_rerank_status = f"disabled: {type(exc).__name__}: {exc}"
                 return
@@ -463,6 +469,7 @@ class Agent:
             "phase4_mode": self.phase4_config.mode,
             "phase5_mode": self.phase5_config.mode,
             "phase6_mode": self.phase6_config.mode,
+            "phase6_provider": self.phase6_config.provider,
             "question_candidate_k": self.phase4_config.question_candidate_k,
             "active_pool_size": self.phase3_config.active_pool_size,
             "feature_scorer_status": self.feature_scorer_status,

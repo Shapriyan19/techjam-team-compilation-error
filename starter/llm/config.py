@@ -5,10 +5,29 @@ from dataclasses import dataclass
 
 
 PHASE6_MODES = frozenset({"off", "shadow", "rerank"})
+PHASE6_PROVIDERS = frozenset({"anthropic", "gemini", "nvidia"})
 
 # Claude Opus 5 is the current default model. The reranking prompt is short and
 # highly structured, so the request runs at low effort with adaptive thinking.
 DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL_BY_PROVIDER = {
+    "anthropic": "claude-opus-5",
+    # gemini-2.5-flash is no longer available to new-user projects as of this
+    # writing (the API's own 404 names gemini-3.6-flash as the replacement);
+    # verified live against the real endpoint before setting this default.
+    "gemini": "gemini-3.6-flash",
+    # Nemotron 3.5 Lightning: ~7x faster per call than the 550B Ultra below
+    # (0.9s vs 6.4s on a 5-candidate probe) and ranks the same probe correctly.
+    # Note: OpenRouter lists this family as "nemotron-3.5-lightning:free"; on
+    # NVIDIA NIM the served ID is the one below - verified via models.list().
+    "nvidia": "nvidia/nemotron-3.5-lightning-30b-a3b",
+    # "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",  # previous default
+}
+DEFAULT_KEY_VARIABLE_BY_PROVIDER = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
+}
 
 
 @dataclass(frozen=True)
@@ -16,6 +35,7 @@ class PhaseSixConfig:
     """Optional small-shortlist LLM reranking. Off unless explicitly enabled."""
 
     mode: str = "off"
+    provider: str = "anthropic"
     model: str = DEFAULT_MODEL
     shortlist_size: int = 40
     max_calls_per_session: int = 3
@@ -26,10 +46,17 @@ class PhaseSixConfig:
     max_output_tokens: int = 2048
     effort: str = "low"
     api_key_variable: str = "ANTHROPIC_API_KEY"
+    # Enforced minimum gap between calls, seconds. 0 = no pacing (Anthropic's
+    # tier handled our test volume fine). Gemini's free/low tier has a strict
+    # requests-per-minute cap and returned 429s on a burst of test calls; set
+    # this when running against a similarly limited Gemini project.
+    min_request_interval_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         if self.mode not in PHASE6_MODES:
             raise ValueError(f"unsupported Phase 6 mode: {self.mode}")
+        if self.provider not in PHASE6_PROVIDERS:
+            raise ValueError(f"unsupported Phase 6 provider: {self.provider}")
         if not 2 <= self.shortlist_size <= 100:
             raise ValueError("shortlist_size must be between 2 and 100")
         if self.max_calls_per_session < 1:
@@ -38,6 +65,8 @@ class PhaseSixConfig:
             raise ValueError("invalid Phase 6 turn window")
         if self.timeout_seconds <= 0.0:
             raise ValueError("timeout_seconds must be positive")
+        if self.min_request_interval_seconds < 0.0:
+            raise ValueError("min_request_interval_seconds must not be negative")
         if self.max_retries < 0:
             raise ValueError("max_retries must not be negative")
         if self.max_output_tokens < 64:
@@ -58,9 +87,15 @@ class PhaseSixConfig:
 
     @classmethod
     def from_environment(cls) -> "PhaseSixConfig":
+        # Provider is read first so its own model/key-variable defaults apply
+        # unless the caller overrides them explicitly.
+        provider = os.getenv("TECHJAM_LLM_PROVIDER", "anthropic").strip().casefold()
+        default_model = DEFAULT_MODEL_BY_PROVIDER.get(provider, DEFAULT_MODEL)
+        default_key_variable = DEFAULT_KEY_VARIABLE_BY_PROVIDER.get(provider, "ANTHROPIC_API_KEY")
         return cls(
             mode=os.getenv("TECHJAM_PHASE6_MODE", "off").strip().casefold(),
-            model=os.getenv("TECHJAM_LLM_MODEL", DEFAULT_MODEL).strip(),
+            provider=provider,
+            model=os.getenv("TECHJAM_LLM_MODEL", default_model).strip(),
             shortlist_size=_environment_int("TECHJAM_LLM_SHORTLIST", 40),
             max_calls_per_session=_environment_int("TECHJAM_LLM_MAX_CALLS", 3),
             first_turn=_environment_int("TECHJAM_LLM_FIRST_TURN", 1),
@@ -69,7 +104,8 @@ class PhaseSixConfig:
             max_retries=_environment_int("TECHJAM_LLM_MAX_RETRIES", 1),
             max_output_tokens=_environment_int("TECHJAM_LLM_MAX_TOKENS", 2048),
             effort=os.getenv("TECHJAM_LLM_EFFORT", "low").strip().casefold(),
-            api_key_variable=os.getenv("TECHJAM_LLM_KEY_VARIABLE", "ANTHROPIC_API_KEY").strip(),
+            api_key_variable=os.getenv("TECHJAM_LLM_KEY_VARIABLE", default_key_variable).strip(),
+            min_request_interval_seconds=_environment_float("TECHJAM_LLM_MIN_INTERVAL", 0.0),
         )
 
 

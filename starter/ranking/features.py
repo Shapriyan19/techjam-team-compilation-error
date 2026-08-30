@@ -14,6 +14,8 @@ from starter.ranking.evidence import CandidateEvidence, FreshCandidate
 from starter.state import ConstraintStrength, SessionState, SlotValue
 
 
+_NON_WEIGHT_FIELDS = frozenset({"route_support_mode"})
+
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 KNOWN_COLORS = frozenset({
     "black", "white", "blue", "red", "pink", "green", "brown", "gray", "grey",
@@ -53,6 +55,10 @@ FIT_RE = re.compile(
 # alphanumeric words, so contiguous n-gram membership over the normalized corpus
 # is exactly equivalent to the previous boundary-anchored search.
 _PHRASE_VOCABULARIES = (KNOWN_USE_CASES, KNOWN_STYLES, KNOWN_OCCASIONS, KNOWN_FEATURES)
+# Number of fully-matched fragments at which the conjunction signal saturates.
+_FRAGMENT_SATURATION = 3.0
+# Extra credit when the phrase appears verbatim, on top of graded coverage.
+_EXACT_PHRASE_BONUS = 0.5
 _MAX_PHRASE_TOKENS = max(
     len(phrase.split()) for vocabulary in _PHRASE_VOCABULARIES for phrase in vocabulary
 )
@@ -76,6 +82,9 @@ class ProductFeatures:
     style_values: tuple[str, ...]
     occasion_values: tuple[str, ...]
     feature_values: tuple[str, ...]
+    # Whitespace-normalized, lowercased catalog text. Kept as a string (not just
+    # the n-gram set) because shopper fragments run longer than the n-gram cap.
+    normalized_text: str
 
 
 @dataclass(frozen=True)
@@ -270,10 +279,10 @@ class DeterministicFeatureScorer:
             candidate.parent_asin in state.rejected_product_ids
             or (record is not None and record.rejected)
         )
-        route_support = min(max(len(candidate.route_ranks) - 1, 0), 1)
+        route_support = _route_support(candidate.route_ranks, self.weights.route_support_mode)
         return {
             "retrieval_rank": 1.0 / math.sqrt(max(candidate.fused_rank, 1)),
-            "route_support": float(route_support),
+            "route_support": route_support,
             "category": category,
             "product_type": product_type,
             "brand": brand,
@@ -283,6 +292,7 @@ class DeterministicFeatureScorer:
             "style": style,
             "occasion": occasion,
             "feature_overlap": feature_overlap,
+            "fragment_agreement": _fragment_agreement(state, product),
             "price": price,
             "persistence": persistence,
             "recency": recency,
@@ -292,7 +302,21 @@ class DeterministicFeatureScorer:
 
 
 def _weighted_items(weights: FeatureWeights) -> tuple[tuple[str, float], ...]:
-    return tuple((name, float(getattr(weights, name))) for name in weights.__dataclass_fields__)
+    return tuple(
+        (name, float(getattr(weights, name)))
+        for name in weights.__dataclass_fields__
+        if name not in _NON_WEIGHT_FIELDS
+    )
+
+
+def _route_support(route_ranks: tuple[tuple[str, int], ...], mode: str) -> float:
+    if mode == "continuous":
+        # Reciprocal rank per route rewards a candidate that a route ranked
+        # highly more than one that barely made that route's Top-N, unlike
+        # the binary mode below, which awards the same bonus for any 2+ route
+        # presence regardless of how strong each route's own ranking was.
+        return min(sum(1.0 / rank for _, rank in route_ranks if rank > 0), 1.0)
+    return float(min(max(len(route_ranks) - 1, 0), 1))
 
 
 def _slot_agreement(
@@ -311,6 +335,45 @@ def _slot_agreement(
     if slot.strength == ConstraintStrength.HARD and reliable_terms:
         return 0.0, 1.0
     return 0.0, 0.0
+
+
+def _fragment_agreement(state: SessionState, product: ProductFeatures) -> float:
+    """How well this product accounts for the shopper's literal statements.
+
+    Exact phrase presence scores 1.0. Anything else falls back to squared token
+    coverage, so a reworded fragment still earns partial credit while incidental
+    overlap on common words ("imported", "closure") stays near zero. The squaring
+    matters: without it every candidate picks up a similar floor from boilerplate
+    and the feature stops discriminating.
+
+    Deliberately a score, never a filter - Amazon metadata is patchy enough that
+    excluding non-matches would drop the true target whenever one phrase is
+    simply absent from its listing.
+    """
+    fragments = state.verbatim_fragments
+    if not fragments:
+        return 0.0
+    total = 0.0
+    for fragment in fragments:
+        normalized = _normalize_phrase(fragment)
+        if not normalized:
+            continue
+        tokens = _tokens(fragment)
+        if not tokens:
+            continue
+        # Graded rather than binary. An exact phrase hit is worth more, but a
+        # flat 1.0 for it would tie together every product sharing that phrase
+        # (often dozens), losing the ability to order within the tie. Squared
+        # coverage keeps incidental common-word overlap near zero.
+        covered = len(tokens & product.all_terms) / len(tokens)
+        total += covered * covered
+        if normalized in product.normalized_text:
+            total += _EXACT_PHRASE_BONUS
+    # Saturating sum rather than a mean: matching three stated phrases is much
+    # stronger evidence than matching one, but averaging would score 1-of-1
+    # above 3-of-4. Normalizing by a constant keeps the feature bounded while
+    # still rewarding accumulated agreement.
+    return min(total / _FRAGMENT_SATURATION, 1.0)
 
 
 def _negative_conflict(state: SessionState, product: ProductFeatures) -> float:
@@ -346,7 +409,8 @@ def _product_features(product: dict) -> ProductFeatures:
     detail_text = _text(details)
     store = _text(product.get("store"))
     corpus = " ".join((title, categories, features, description, detail_text, store))
-    corpus_ngrams = _corpus_ngrams(_normalize_phrase(corpus))
+    normalized_corpus = _normalize_phrase(corpus)
+    corpus_ngrams = _corpus_ngrams(normalized_corpus)
     all_terms = _tokens(corpus)
     brand_detail = " ".join(
         str(value)
@@ -380,6 +444,7 @@ def _product_features(product: dict) -> ProductFeatures:
         style_values=_phrases_present(corpus_ngrams, KNOWN_STYLES),
         occasion_values=_phrases_present(corpus_ngrams, KNOWN_OCCASIONS),
         feature_values=_phrases_present(corpus_ngrams, KNOWN_FEATURES),
+        normalized_text=normalized_corpus,
     )
 
 

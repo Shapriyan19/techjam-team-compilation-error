@@ -546,8 +546,7 @@ decoded-feature cache; the cache trades `-17%` wall time for `+127 MiB` at `2000
 ### Run the optional Phase 6 LLM reranker
 
 ```bash
-python -m pip install anthropic
-export ANTHROPIC_API_KEY=...        # never commit this
+python -m pip install []  
 TECHJAM_PHASE6_MODE=shadow python -m evaluator.local_evaluator --output artifacts/evaluation/p6_shadow.json
 TECHJAM_PHASE6_MODE=rerank python -m evaluator.local_evaluator --output artifacts/evaluation/p6_e001.json
 ```

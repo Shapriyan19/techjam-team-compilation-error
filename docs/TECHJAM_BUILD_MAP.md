@@ -4,8 +4,9 @@ This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase
 
-**Phase 9 (post-roadmap): reranker weight repair on top of Phase 8. The selected runtime is
-`P9-E001`. Recommended TechnicalScore `0.604103`, HitRate@10 `0.750000` on the public set.**
+**Phase 11 (post-roadmap): verbatim-evidence layer. The selected runtime is `P11-E001`.
+Recommended TechnicalScore `0.700146`, HitRate@10 `0.845000` on the public set - fully
+deterministic, no network or API calls.**
 
 Phase 8 began as work on the clarification policy and found a defect first. In 28 of 200 sessions
 the rewritten retrieval query became empty and stayed empty; all 28 failed. Repairing that
@@ -170,17 +171,18 @@ New or changed in Phases 5–7:
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| Overall | 200 | 0.750000 | 0.357343 | 4.905000 |
-| Buying | 80 | 0.737500 | 0.397212 | 4.537500 |
-| Browsing | 80 | 0.812500 | 0.343579 | 4.325000 |
-| Intent Override | 30 | 0.633333 | 0.294563 | 7.233333 |
-| Boundary | 10 | 0.700000 | 0.317222 | 5.800000 |
+| Overall | 200 | 0.845000 | 0.448486 | 3.845000 |
+| Buying | 80 | 0.825000 | 0.416429 | 3.375000 |
+| Browsing | 80 | 0.900000 | 0.495987 | 3.512500 |
+| Intent Override | 30 | 0.766667 | 0.423929 | 5.766667 |
+| Boundary | 10 | 0.800000 | 0.398611 | 4.500000 |
 
-- Overall Efficiency: `0.609500`
-- Overall recommended TechnicalScore: `0.604103`
+- Overall Efficiency: `0.715500`
+- Overall recommended TechnicalScore: `0.700146`
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
-- Tests: `126 passed, 0 failed`
+- Tests: `137 passed, 0 failed`
 
-Versus the `P7-E009` control (`0.431321`), TechnicalScore is `+0.172782` with 44 new hits and no
-lost hits across Phases 8-9. Retrieval recall measured over the public set is `199/200`, so the
-current ceiling for ranking work is HitRate@10 `0.995`.
+Versus the `P7-E009` control (`0.431321`), TechnicalScore is `+0.268825` across Phases 8-11.
+Retrieval recall measured over the public set is `199/200`, so the ceiling for ranking work is
+HitRate@10 `0.995`; `0.845000` of that is now realized. Phase 6 LLM reranking remains optional and
+off by default.

@@ -107,6 +107,21 @@ class SessionState:
     # with pure non-clues ("no preference", "not quite right"), and if the opening
     # message never parsed into a slot there is otherwise nothing left to search.
     retained_query_text: str = ""
+    # Literal phrases the shopper has stated, accumulated across turns. Any one
+    # of them is usually generic ("Imported" matches ~1,185 products), but the
+    # conjunction is close to a fingerprint - measured over the public misses,
+    # the target was in the top-scoring group 41/41 times, median group size 23.
+    # Used for RANKING (fragment_agreement feature).
+    verbatim_fragments: tuple[str, ...] = ()
+    # Distinct free-text fragments carried across the whole session, not just the
+    # latest message. Descriptive text from an early message (e.g. a product name
+    # or phrase that never resolves to a slot) is often the only thing retrieval
+    # can match on; without this, it silently drops out of the query the moment a
+    # later, shorter reply becomes the "latest" message. Not reset on override:
+    # an override invalidates one specific preference value (handled precisely by
+    # slot-level patches), not the whole product description said earlier.
+    # Used for RETRIEVAL (query construction) - complements the ranking use above.
+    accumulated_free_text: list[str] = field(default_factory=list)
     last_patches: tuple[StatePatch, ...] = ()
     candidate_pool: CandidateEvidencePool = field(default_factory=CandidateEvidencePool)
     override_epoch: int = 0

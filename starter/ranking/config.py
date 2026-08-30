@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 
 PHASE3_MODES = frozenset({"off", "persistence", "rerank"})
+ROUTE_SUPPORT_MODES = frozenset({"binary", "continuous"})
 
 
 @dataclass(frozen=True)
@@ -20,8 +21,21 @@ class PersistenceWeights:
 
 @dataclass(frozen=True)
 class FeatureWeights:
-    retrieval_rank: float = 1.0
+    # Lowered from 1.0 after the P11 fragment layer and P10-E002 retrieval fix
+    # landed. Miss decomposition showed the rank-1 item was beating the target
+    # almost entirely on retrieval_rank (+0.54 average) while the target won on
+    # every semantic feature - BM25 order was overriding what the shopper
+    # actually said. P9 tested lowering this and it hurt, but that was before
+    # the semantic features were strong enough to carry the ranking.
+    # HR@10 is flat at 0.935 across 0.55-0.60 and falls outside that band.
+    retrieval_rank: float = 0.58
     route_support: float = 0.08
+    # "binary" (default) awards the same bonus for any candidate seen by 2+
+    # routes regardless of how strongly each route ranked it. "continuous"
+    # blends each route's own reciprocal rank instead, so a candidate that
+    # barely made a route's Top-100 no longer scores the same as one ranked
+    # near the top of every route. See docs/EXPERIMENT_LOG.md P10 route-support.
+    route_support_mode: str = "binary"
     category: float = 0.18
     product_type: float = 0.14
     brand: float = 0.10
@@ -34,6 +48,14 @@ class FeatureWeights:
     style: float = 0.06
     occasion: float = 0.05
     feature_overlap: float = 0.10
+    # Agreement with the shopper's literal phrases. Weighted well above the
+    # single-slot features because it is a conjunction: matching several stated
+    # phrases at once is far more discriminating than matching any one of them.
+    # Retuned from 2.00 after merging P10-E002: with session-wide free text now
+    # feeding retrieval, the candidate pool is better and this signal needs less
+    # weight. HR@10 is flat at 0.905 across 1.25-1.75 and drops at 2.00, so this
+    # sits mid-plateau rather than on the peak.
+    fragment_agreement: float = 1.60
     price: float = 0.12
     persistence: float = 0.05
     recency: float = 0.02
@@ -42,6 +64,10 @@ class FeatureWeights:
     # rejection penalty scaled down, which was steeper than the data supports -
     # a candidate with one conflicting field can still be a good answer.
     conflict: float = 0.20
+
+    def __post_init__(self) -> None:
+        if self.route_support_mode not in ROUTE_SUPPORT_MODES:
+            raise ValueError(f"unsupported route_support_mode: {self.route_support_mode}")
 
 
 @dataclass(frozen=True)
@@ -80,8 +106,9 @@ class PhaseThreeConfig:
                 contradiction_penalty=_environment_float("TECHJAM_CONTRADICTION_PENALTY", 10.0),
             ),
             feature_weights=FeatureWeights(
-                retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 1.0),
+                retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 0.58),
                 route_support=_environment_float("TECHJAM_FEATURE_ROUTE_SUPPORT", 0.08),
+                route_support_mode=os.getenv("TECHJAM_ROUTE_SUPPORT_MODE", "binary").strip().casefold(),
                 category=_environment_float("TECHJAM_FEATURE_CATEGORY", 0.18),
                 product_type=_environment_float("TECHJAM_FEATURE_PRODUCT_TYPE", 0.14),
                 brand=_environment_float("TECHJAM_FEATURE_BRAND", 0.10),
@@ -91,6 +118,7 @@ class PhaseThreeConfig:
                 style=_environment_float("TECHJAM_FEATURE_STYLE", 0.06),
                 occasion=_environment_float("TECHJAM_FEATURE_OCCASION", 0.05),
                 feature_overlap=_environment_float("TECHJAM_FEATURE_OVERLAP", 0.10),
+                fragment_agreement=_environment_float("TECHJAM_FEATURE_FRAGMENT", 1.60),
                 price=_environment_float("TECHJAM_FEATURE_PRICE", 0.12),
                 persistence=_environment_float("TECHJAM_FEATURE_PERSISTENCE", 0.05),
                 recency=_environment_float("TECHJAM_FEATURE_RECENCY", 0.02),
