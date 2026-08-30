@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 
 PHASE3_MODES = frozenset({"off", "persistence", "rerank"})
+ROUTE_SUPPORT_MODES = frozenset({"binary", "continuous"})
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,12 @@ class PersistenceWeights:
 class FeatureWeights:
     retrieval_rank: float = 1.0
     route_support: float = 0.08
+    # "binary" (default) awards the same bonus for any candidate seen by 2+
+    # routes regardless of how strongly each route ranked it. "continuous"
+    # blends each route's own reciprocal rank instead, so a candidate that
+    # barely made a route's Top-100 no longer scores the same as one ranked
+    # near the top of every route. See docs/EXPERIMENT_LOG.md P10 route-support.
+    route_support_mode: str = "binary"
     category: float = 0.18
     product_type: float = 0.14
     brand: float = 0.10
@@ -42,6 +49,10 @@ class FeatureWeights:
     # rejection penalty scaled down, which was steeper than the data supports -
     # a candidate with one conflicting field can still be a good answer.
     conflict: float = 0.20
+
+    def __post_init__(self) -> None:
+        if self.route_support_mode not in ROUTE_SUPPORT_MODES:
+            raise ValueError(f"unsupported route_support_mode: {self.route_support_mode}")
 
 
 @dataclass(frozen=True)
@@ -82,6 +93,7 @@ class PhaseThreeConfig:
             feature_weights=FeatureWeights(
                 retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 1.0),
                 route_support=_environment_float("TECHJAM_FEATURE_ROUTE_SUPPORT", 0.08),
+                route_support_mode=os.getenv("TECHJAM_ROUTE_SUPPORT_MODE", "binary").strip().casefold(),
                 category=_environment_float("TECHJAM_FEATURE_CATEGORY", 0.18),
                 product_type=_environment_float("TECHJAM_FEATURE_PRODUCT_TYPE", 0.14),
                 brand=_environment_float("TECHJAM_FEATURE_BRAND", 0.10),

@@ -362,15 +362,23 @@ def parse_message(message: str, turn: int, state: SessionState) -> ParsedMessage
 
 def update_state_from_message(state: SessionState, message: str, turn: int) -> ParsedMessage:
     state.observe_message(turn, message)
+    if NO_PREFERENCE_RE.search(message):
+        state.record_no_preference_for_last_question()
+    parsed = parse_message(message, turn, state)
     if not is_non_clue_message(message):
         # Keep the newest message that says something, so a later run of
         # non-clue replies still has content to fall back on.
         retained = _clean_free_text(state, message)
         if retained:
             state.retained_query_text = retained
-    if NO_PREFERENCE_RE.search(message):
-        state.record_no_preference_for_last_question()
-    parsed = parse_message(message, turn, state)
+            # Store the discourse-only-cleaned fragment (not negative-preference
+            # filtered) so a negation from a *later* turn still retroactively
+            # strips words from this turn's text at rewrite time.
+            discourse_only = _strip_discourse(message)
+            if discourse_only.casefold() not in {
+                frag.casefold() for frag in state.accumulated_free_text
+            }:
+                state.accumulated_free_text.append(discourse_only)
     patches = list(parsed.patches)
     state.apply_patches(patches)
     if parsed.detected_scenario:
@@ -403,11 +411,16 @@ def rewrite_query(state: SessionState) -> str:
     if maximum is not None:
         fragments.append(f"under {_format_number(maximum.value)}")
 
-    latest = state.latest_message
-    if latest and not is_non_clue_message(latest):
-        fallback = _clean_free_text(state, latest)
-        if fallback:
-            fragments.append(fallback)
+    # Accumulated across the whole session (not just the latest message), so a
+    # descriptive phrase from an earlier turn that never resolved to a slot
+    # isn't lost the moment a later, shorter reply becomes the newest message.
+    # Negative preferences are stripped here (not at accumulation time) so a
+    # negation from a later turn still retroactively cleans earlier fragments.
+    fragments.extend(
+        cleaned
+        for fragment in state.accumulated_free_text
+        if (cleaned := _strip_negative_preferences(state, fragment))
+    )
 
     unique: list[str] = []
     seen: set[str] = set()
@@ -431,14 +444,22 @@ def is_non_clue_message(message: str) -> bool:
     return bool(REJECTION_RE.search(message) or NO_PREFERENCE_RE.search(message))
 
 
-def _clean_free_text(state: SessionState, text: str) -> str:
-    """Strip discourse filler and anything the shopper has explicitly ruled out."""
+def _strip_discourse(text: str) -> str:
+    cleaned = DISCOURSE_RE.sub(" ", text)
+    return " ".join(cleaned.split()).strip(" ,.;:-")
+
+
+def _strip_negative_preferences(state: SessionState, text: str) -> str:
     cleaned = text
     for values in state.negative_preferences.values():
         for value in values:
             cleaned = re.sub(re.escape(value), " ", cleaned, flags=re.IGNORECASE)
-    cleaned = DISCOURSE_RE.sub(" ", cleaned)
     return " ".join(cleaned.split()).strip(" ,.;:-")
+
+
+def _clean_free_text(state: SessionState, text: str) -> str:
+    """Strip discourse filler and anything the shopper has explicitly ruled out."""
+    return _strip_negative_preferences(state, _strip_discourse(text))
 
 
 def _singleton_slot_patches(

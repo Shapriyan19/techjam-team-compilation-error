@@ -14,6 +14,8 @@ from starter.ranking.evidence import CandidateEvidence, FreshCandidate
 from starter.state import ConstraintStrength, SessionState, SlotValue
 
 
+_NON_WEIGHT_FIELDS = frozenset({"route_support_mode"})
+
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 KNOWN_COLORS = frozenset({
     "black", "white", "blue", "red", "pink", "green", "brown", "gray", "grey",
@@ -270,10 +272,10 @@ class DeterministicFeatureScorer:
             candidate.parent_asin in state.rejected_product_ids
             or (record is not None and record.rejected)
         )
-        route_support = min(max(len(candidate.route_ranks) - 1, 0), 1)
+        route_support = _route_support(candidate.route_ranks, self.weights.route_support_mode)
         return {
             "retrieval_rank": 1.0 / math.sqrt(max(candidate.fused_rank, 1)),
-            "route_support": float(route_support),
+            "route_support": route_support,
             "category": category,
             "product_type": product_type,
             "brand": brand,
@@ -292,7 +294,21 @@ class DeterministicFeatureScorer:
 
 
 def _weighted_items(weights: FeatureWeights) -> tuple[tuple[str, float], ...]:
-    return tuple((name, float(getattr(weights, name))) for name in weights.__dataclass_fields__)
+    return tuple(
+        (name, float(getattr(weights, name)))
+        for name in weights.__dataclass_fields__
+        if name not in _NON_WEIGHT_FIELDS
+    )
+
+
+def _route_support(route_ranks: tuple[tuple[str, int], ...], mode: str) -> float:
+    if mode == "continuous":
+        # Reciprocal rank per route rewards a candidate that a route ranked
+        # highly more than one that barely made that route's Top-N, unlike
+        # the binary mode below, which awards the same bonus for any 2+ route
+        # presence regardless of how strong each route's own ranking was.
+        return min(sum(1.0 / rank for _, rank in route_ranks if rank > 0), 1.0)
+    return float(min(max(len(route_ranks) - 1, 0), 1))
 
 
 def _slot_agreement(
