@@ -12,10 +12,28 @@ RETRIEVAL_MODES = frozenset({"lexical", "hybrid", "hybrid_facet", "scenario"})
 class RetrievalConfig:
     mode: str = "hybrid_facet"
     artifact_dir: Path = Path("artifacts/retrieval")
-    lexical_top_n: int = 100
+    # Widened from 100. On a synthetic set with uniformly distributed targets
+    # (not front-loaded like the public set), generic categories are crowded
+    # enough that the target sits well past rank 100 in raw lexical search
+    # (e.g. ~4,000 catalog products match "cotton"+"tee" simultaneously) - the
+    # reranker never gets a chance to promote a target it never sees. 300
+    # recovers real recall failures on synthetic (+0.013 TS) while costing the
+    # public set nothing measurable.
+    lexical_top_n: int = 300
     dense_top_n: int = 100
-    facet_top_n: int = 100
-    rrf_k: float = 60.0
+    facet_top_n: int = 300
+    # Lowered from 60. RRF sums per-route contributions, so at k=60 an item
+    # ranked 50th in two routes (2/110) outscores one ranked 1st in a single
+    # route (1/61) - multi-route presence beats rank quality. A smaller k
+    # sharpens rank discrimination and reduces that bias. Deliberately a
+    # trade: worth ~+0.028 TS averaged over two synthetic draws and ~-0.009 on
+    # the public set, taken because the public set's front-loaded targets make
+    # it the less trustworthy of the two. Revert with TECHJAM_RRF_K=60.
+    rrf_k: float = 20.0
+    # How per-route RRF contributions merge. "sum" is textbook RRF but rewards
+    # multi-route presence over rank quality; "max" scores a candidate on its
+    # single best route. See docs/EXPERIMENT_LOG.md P16.
+    rrf_combine: str = "sum"
     lexical_weight: float = 1.0
     dense_weight: float = 0.0
     # P7-E006. Chosen from the tie-order-independent sweep, where the facet route
@@ -38,10 +56,11 @@ class RetrievalConfig:
         return cls(
             mode=os.getenv("TECHJAM_RETRIEVAL_MODE", "hybrid_facet").strip().casefold(),
             artifact_dir=Path(os.getenv("TECHJAM_RETRIEVAL_ARTIFACTS", "artifacts/retrieval")),
-            lexical_top_n=_environment_int("TECHJAM_LEXICAL_TOP_N", 100),
+            lexical_top_n=_environment_int("TECHJAM_LEXICAL_TOP_N", 300),
             dense_top_n=_environment_int("TECHJAM_DENSE_TOP_N", 100),
-            facet_top_n=_environment_int("TECHJAM_FACET_TOP_N", 100),
-            rrf_k=_environment_float("TECHJAM_RRF_K", 60.0),
+            facet_top_n=_environment_int("TECHJAM_FACET_TOP_N", 300),
+            rrf_k=_environment_float("TECHJAM_RRF_K", 20.0),
+            rrf_combine=os.getenv("TECHJAM_RRF_COMBINE", "sum").strip().casefold(),
             lexical_weight=_environment_float("TECHJAM_LEXICAL_WEIGHT", 1.0),
             dense_weight=_environment_float("TECHJAM_DENSE_WEIGHT", 0.0),
             facet_weight=_environment_float("TECHJAM_FACET_WEIGHT", 0.95),

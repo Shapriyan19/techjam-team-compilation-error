@@ -21,15 +21,28 @@ class PersistenceWeights:
 
 @dataclass(frozen=True)
 class FeatureWeights:
-    # Lowered from 1.0 after the P11 fragment layer and P10-E002 retrieval fix
-    # landed. Miss decomposition showed the rank-1 item was beating the target
-    # almost entirely on retrieval_rank (+0.54 average) while the target won on
-    # every semantic feature - BM25 order was overriding what the shopper
-    # actually said. P9 tested lowering this and it hurt, but that was before
-    # the semantic features were strong enough to carry the ranking.
-    # HR@10 is flat at 0.935 across 0.55-0.60 and falls outside that band.
-    retrieval_rank: float = 0.58
-    route_support: float = 0.08
+    # Lowered from 1.0 (then from an intermediate 0.58 - see below) after the
+    # P11 fragment layer and P10-E002 retrieval fix landed. Miss decomposition
+    # showed the rank-1 item was beating the target almost entirely on
+    # retrieval_rank while the target won on every semantic feature - BM25
+    # order was overriding what the shopper actually said.
+    # 0.58 was tuned only on the public set, which is not representative: 73%
+    # of its targets sit in the first 1,000 of 50,000 catalog rows (see
+    # docs/EXPERIMENT_LOG.md P7-E010-E013), so retrieval looks artificially
+    # easy there. On a synthetic set with uniformly distributed targets
+    # (scripts/generate_synthetic_set.py), 0.58 leaves real headroom; 0.20-0.30
+    # is a broad plateau that costs the public set <0.003 TS while gaining the
+    # synthetic set +0.018 TS. 0.30 generalizes better than 0.58.
+    retrieval_rank: float = 0.30
+    # Disabled. Miss decomposition on the artifact-free synthetic set found this
+    # was the single largest advantage the rank-10 item held over the target
+    # (+0.48 average feature value, ~2/3 of the median score gap). Rewarding
+    # candidates that BOTH the lexical and facet routes return favours generic,
+    # widely-matching products over the one specific item the shopper wants -
+    # exactly backwards in crowded categories. Zeroing gains synthetic +0.014 TS
+    # and is neutral on the public set. Weight kept configurable; the
+    # route_support_mode option below is now inert at this weight.
+    route_support: float = 0.00
     # "binary" (default) awards the same bonus for any candidate seen by 2+
     # routes regardless of how strongly each route ranked it. "continuous"
     # blends each route's own reciprocal rank instead, so a candidate that
@@ -74,8 +87,16 @@ class FeatureWeights:
 class PhaseThreeConfig:
     mode: str = "rerank"
     active_pool_size: int = 1000
-    fresh_candidate_limit: int = 200
+    # Widened alongside the lexical/facet route Top-N (see
+    # starter/retrieval/config.py) so the wider routes actually reach the
+    # reranker instead of being truncated again here.
+    fresh_candidate_limit: int = 600
     shortlist_size: int = 50
+    # Weight matched terms by inverse document frequency in fragment_agreement
+    # instead of counting them equally. See docs/EXPERIMENT_LOG.md P18. Falls
+    # back to unweighted coverage automatically if the retrieval artifacts are
+    # missing, so this never becomes a hard dependency.
+    use_term_rarity: bool = True
     persistence_weights: PersistenceWeights = PersistenceWeights()
     feature_weights: FeatureWeights = FeatureWeights()
 
@@ -94,8 +115,11 @@ class PhaseThreeConfig:
         return cls(
             mode=os.getenv("TECHJAM_PHASE3_MODE", "rerank").strip().casefold(),
             active_pool_size=_environment_int("TECHJAM_ACTIVE_POOL_SIZE", 1000),
-            fresh_candidate_limit=_environment_int("TECHJAM_FRESH_CANDIDATE_LIMIT", 200),
+            fresh_candidate_limit=_environment_int("TECHJAM_FRESH_CANDIDATE_LIMIT", 600),
             shortlist_size=_environment_int("TECHJAM_SHORTLIST_SIZE", 50),
+            use_term_rarity=os.getenv(
+                "TECHJAM_FEATURE_TERM_RARITY", "1"
+            ).strip().casefold() not in {"0", "false", "no"},
             persistence_weights=PersistenceWeights(
                 current_rrf=_environment_float("TECHJAM_PERSIST_CURRENT_RRF", 1.0),
                 previous_rrf=_environment_float("TECHJAM_PERSIST_PREVIOUS_RRF", 0.20),
@@ -106,8 +130,8 @@ class PhaseThreeConfig:
                 contradiction_penalty=_environment_float("TECHJAM_CONTRADICTION_PENALTY", 10.0),
             ),
             feature_weights=FeatureWeights(
-                retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 0.58),
-                route_support=_environment_float("TECHJAM_FEATURE_ROUTE_SUPPORT", 0.08),
+                retrieval_rank=_environment_float("TECHJAM_FEATURE_RETRIEVAL", 0.30),
+                route_support=_environment_float("TECHJAM_FEATURE_ROUTE_SUPPORT", 0.00),
                 route_support_mode=os.getenv("TECHJAM_ROUTE_SUPPORT_MODE", "binary").strip().casefold(),
                 category=_environment_float("TECHJAM_FEATURE_CATEGORY", 0.18),
                 product_type=_environment_float("TECHJAM_FEATURE_PRODUCT_TYPE", 0.14),

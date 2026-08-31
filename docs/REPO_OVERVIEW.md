@@ -595,3 +595,7 @@ attributable to catalog row ordering rather than to retrieval, which
 `docs/TECHJAM_BUILD_MAP.md` records under known problems. Reported token usage remains zero
 because Phase 6 is off. The final suite has `124 passed, 0 failed` and the evaluator takes
 `136.75 s`.
+
+## Conceptual reference
+
+- `docs/ARCHITECTURE_EXPLAINED.md` — plain-language walkthrough of the two retrieval routes, the five stages of a turn, and the current ranking diagnosis (P18-D001).

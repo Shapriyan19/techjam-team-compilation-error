@@ -32,10 +32,21 @@ def weighted_rrf_details(
     *,
     k: float = 60.0,
     limit: int | None = None,
+    combine: str = "sum",
 ) -> list[FusedResult]:
-    """Return the unchanged RRF order together with transparent route evidence."""
+    """Return the unchanged RRF order together with transparent route evidence.
+
+    `combine` controls how a candidate's per-route contributions are merged.
+    "sum" is textbook RRF and rewards appearing in several routes at once; with
+    k=60 that lets an item ranked 50th in two routes outscore an item ranked
+    1st in one. "max" takes the single strongest route instead, so a candidate
+    is judged on how well its best route ranked it rather than on how many
+    routes happened to surface it.
+    """
     if k < 0:
         raise ValueError("RRF k must be non-negative")
+    if combine not in {"sum", "max"}:
+        raise ValueError(f"unsupported combine mode: {combine}")
     route_weights = weights or {}
     scores: dict[str, float] = {}
     best_rank: dict[str, int] = {}
@@ -55,7 +66,11 @@ def weighted_rrf_details(
             if identifier not in first_seen:
                 first_seen[identifier] = ordinal
                 ordinal += 1
-            scores[identifier] = scores.get(identifier, 0.0) + weight / (k + rank)
+            contribution = weight / (k + rank)
+            if combine == "max":
+                scores[identifier] = max(scores.get(identifier, 0.0), contribution)
+            else:
+                scores[identifier] = scores.get(identifier, 0.0) + contribution
             best_rank[identifier] = min(best_rank.get(identifier, rank), rank)
             route_ranks.setdefault(identifier, {})[route] = rank
     ordered = sorted(

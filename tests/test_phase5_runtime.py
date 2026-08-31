@@ -513,3 +513,38 @@ class RecommendationContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrecisionTurnAllocationTests(unittest.TestCase):
+    """P19: short opening lists trade MTTC for MRR under the first-hit rule."""
+
+    def test_opening_turns_emit_a_single_recommendation(self) -> None:
+        config = AllocationConfig(precision_turns=2, precision_top_k=1)
+        self.assertEqual(config.effective_top_k(1, 10), 1)
+        self.assertEqual(config.effective_top_k(2, 10), 1)
+
+    def test_later_turns_emit_the_full_top_k(self) -> None:
+        config = AllocationConfig(precision_turns=2, precision_top_k=1)
+        self.assertEqual(config.effective_top_k(3, 10), 10)
+        self.assertEqual(config.effective_top_k(10, 10), 10)
+
+    def test_disabled_by_default_configuration_value_of_zero(self) -> None:
+        config = AllocationConfig(precision_turns=0)
+        self.assertEqual(config.effective_top_k(1, 10), 10)
+
+    def test_never_emits_more_than_the_requested_top_k(self) -> None:
+        # The contract allows up to top_k; a larger precision_top_k must not
+        # widen the response beyond what the caller asked for.
+        config = AllocationConfig(precision_turns=2, precision_top_k=5)
+        self.assertEqual(config.effective_top_k(1, 3), 3)
+
+    def test_agent_respects_the_policy_end_to_end(self) -> None:
+        agent = Agent("data/catalog.jsonl")
+        try:
+            agent.reset("precision", {})
+            first = agent.respond("precision", "I want navy cotton running shoes", 1, 10)
+            later = agent.respond("precision", "size 10 please", 3, 10)
+        finally:
+            agent.close()
+        self.assertEqual(len(first["recommendations"]), 1)
+        self.assertGreater(len(later["recommendations"]), 1)

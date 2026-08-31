@@ -17,3 +17,8 @@ tests/test_5core_builder.py
 tests/test_organizer_pipeline.py
 *.log
 artifacts/evaluation/
+# One-off measurement outputs from ad hoc scripts/tools - not reusable, not
+# needed to reproduce the results (those are in docs/EXPERIMENT_LOG.md).
+results_*.json
+decomposition*.json
+pool_probe*.json

@@ -23,7 +23,13 @@ from starter.ranking.evidence import (
     FreshCandidate,
     explicit_rejected_ids,
 )
-from starter.ranking.features import CatalogFeatureStore, DeterministicFeatureScorer, ScoredCandidate
+from starter.ranking.features import (
+    CatalogFeatureStore,
+    DeterministicFeatureScorer,
+    ScoredCandidate,
+    singular_token,
+)
+from starter.ranking.rarity import TermRarity
 from starter.retrieval.config import RetrievalConfig
 from starter.retrieval.dense import DenseRetriever
 from starter.retrieval.facets import FacetRetriever
@@ -123,6 +129,7 @@ class Agent:
         self.dense_status = "disabled"
         self.facet_status = "disabled"
         self.feature_scorer_status = "disabled"
+        self.term_rarity_status = "disabled"
         self.clarification_status = "disabled"
         self.allocation_status = "disabled"
         self.semantic_rerank_status = "disabled"
@@ -216,9 +223,20 @@ class Agent:
                 self.catalog_path,
                 cache_size=self.phase5_config.feature_cache_size,
             )
+            rarity = None
+            if self.phase3_config.use_term_rarity:
+                try:
+                    rarity = TermRarity.from_artifacts(
+                        self.retrieval_config.artifact_dir, stemmer=singular_token
+                    )
+                    self.term_rarity_status = f"ready: {len(rarity)} terms"
+                except Exception as exc:
+                    # Unweighted coverage is a valid ranking, just a blunter one.
+                    self.term_rarity_status = f"fallback: {type(exc).__name__}: {exc}"
             self._feature_scorer = DeterministicFeatureScorer(
                 self._feature_store,
                 self.phase3_config.feature_weights,
+                rarity=rarity,
             )
             self.feature_scorer_status = "ready"
         except Exception as exc:
@@ -343,6 +361,7 @@ class Agent:
             self.retrieval_config.route_weights(state.active_scenario),
             k=self.retrieval_config.rrf_k,
             limit=limit,
+            combine=self.retrieval_config.rrf_combine,
         )
         return [
             FreshCandidate(
@@ -629,7 +648,9 @@ class Agent:
                 candidates, tier = self._semantic_rerank(
                     candidates, state, tier, degraded, usage
                 )
-                recommendations, tier = self._allocate(candidates, top_k, tier, degraded)
+                recommendations, tier = self._allocate(
+                    candidates, top_k, tier, degraded, state.turn
+                )
             else:
                 recommendations = self._search(query, top_k, state)
         except Exception:
@@ -692,12 +713,14 @@ class Agent:
         top_k: int,
         tier: str,
         degraded: list[str],
+        turn: int = 0,
     ) -> tuple[list[dict], str]:
-        ranked = [{"parent_asin": candidate.parent_asin} for candidate in candidates[:top_k]]
+        emit_k = self.phase5_config.allocation.effective_top_k(turn, top_k)
+        ranked = [{"parent_asin": candidate.parent_asin} for candidate in candidates[:emit_k]]
         if self._allocator is None:
             return ranked, tier
         try:
-            allocation = self._allocator.allocate(candidates, top_k)
+            allocation = self._allocator.allocate(candidates, emit_k)
         except Exception:
             degraded.append("allocation")
             return ranked, _worst_tier(tier, "allocation_fallback")

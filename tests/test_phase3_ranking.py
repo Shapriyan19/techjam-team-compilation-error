@@ -436,3 +436,65 @@ class DeterministicFeatureScorerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TermRarityFragmentTests(unittest.TestCase):
+    """P18: rarity-weighted fragment agreement must separate crowded categories."""
+
+    def setUp(self) -> None:
+        from starter.ranking.rarity import TermRarity
+
+        # "cotton"/"women" are near-universal in a clothing catalog; "croslite"
+        # is close to a fingerprint.
+        self.rarity = TermRarity(
+            {"cotton": 2.0, "women": 1.5, "croslite": 7.0, "shirt": 3.0},
+            default=8.0,
+            floor=1.0,
+            stopwords=frozenset({"with", "the"}),
+        )
+
+    def test_stopwords_score_at_the_floor_not_the_unknown_default(self) -> None:
+        # Regression: stopwords are stripped before the vocabulary is built, so a
+        # naive lookup would treat "with" as the rarest term in the query.
+        self.assertEqual(self.rarity.weight("with"), 1.0)
+        self.assertEqual(self.rarity.weight("unindexed"), 8.0)
+
+    def test_rare_term_match_outranks_several_common_matches(self) -> None:
+        from starter.ranking.features import _fragment_agreement
+
+        state = SessionState(session_id="s", user_profile={})
+        state.verbatim_fragments = ("women cotton shirt croslite",)
+        rare = _StubProduct(frozenset({"croslite"}))
+        common = _StubProduct(frozenset({"women", "cotton"}))
+        self.assertGreater(
+            _fragment_agreement(state, rare, self.rarity),
+            _fragment_agreement(state, common, self.rarity),
+        )
+
+    def test_unweighted_scoring_cannot_make_that_distinction(self) -> None:
+        # The behaviour P18-D001 diagnosed: counting tokens equally rates two
+        # common matches above one rare one, which is backwards.
+        from starter.ranking.features import _fragment_agreement
+
+        state = SessionState(session_id="s", user_profile={})
+        state.verbatim_fragments = ("women cotton shirt croslite",)
+        rare = _StubProduct(frozenset({"croslite"}))
+        common = _StubProduct(frozenset({"women", "cotton"}))
+        self.assertLess(
+            _fragment_agreement(state, rare, None),
+            _fragment_agreement(state, common, None),
+        )
+
+    def test_missing_artifacts_degrade_to_unweighted_coverage(self) -> None:
+        from starter.ranking.rarity import TermRarity
+
+        with self.assertRaises(Exception):
+            TermRarity.from_artifacts("artifacts/does-not-exist")
+
+
+class _StubProduct:
+    """Minimal stand-in exposing only what _fragment_agreement reads."""
+
+    def __init__(self, terms: frozenset[str]) -> None:
+        self.all_terms = terms
+        self.normalized_text = ""
