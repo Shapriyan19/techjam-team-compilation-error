@@ -42,6 +42,11 @@ class RetrievalConfig:
     facet_weight: float = 0.95
     validate_artifact_checksums: bool = True
     deterministic_facet_ties: bool = True
+    # Restrict candidates to the shelf the shopper named, when one is
+    # recoverable from their opening message. The routes below stay in place as
+    # the fallback for every turn where no shelf resolves; set this off to force
+    # that fallback and exercise the fusion path on its own.
+    use_shelf: bool = True
 
     def __post_init__(self) -> None:
         if self.mode not in RETRIEVAL_MODES:
@@ -69,6 +74,9 @@ class RetrievalConfig:
             ).strip().casefold() not in {"0", "false", "no"},
             deterministic_facet_ties=os.getenv(
                 "TECHJAM_FACET_DETERMINISTIC_TIES", "1"
+            ).strip().casefold() not in {"0", "false", "no"},
+            use_shelf=os.getenv(
+                "TECHJAM_USE_SHELF", "1"
             ).strip().casefold() not in {"0", "false", "no"},
         )
 

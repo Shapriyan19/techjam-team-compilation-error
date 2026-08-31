@@ -193,6 +193,10 @@ class AgentHybridIntegrationTest(unittest.TestCase):
                 facet_top_n=10,
                 dense_weight=1.0,
                 validate_artifact_checksums=False,
+                # These tests are about how the retrieval routes fuse, which is
+                # the path taken when no shelf resolves. Shelf restriction would
+                # short-circuit the routes before any of them ran.
+                use_shelf=False,
             ),
             PhaseThreeConfig(mode="off"),
         )
@@ -265,6 +269,7 @@ class AgentHybridIntegrationTest(unittest.TestCase):
                 facet_top_n=10,
                 dense_weight=0.0,
                 validate_artifact_checksums=False,
+                use_shelf=False,
             )
             agent = Agent(catalog_path, config, PhaseThreeConfig(mode="off"))
             dense = _RecordingDense(failure=AssertionError("dense route should not execute"))
