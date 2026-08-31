@@ -133,6 +133,9 @@ Teams may use any legally accessible LLM API or local model. Teams manage their 
 ## Files
 
 ```text
+submission/README.md              setup, one run command, environment variables
+submission/REPORT.md              method, model choice, and limitations
+submission/DISCLOSURE.md          latency, token usage, and estimated cost
 data/public_set.jsonl             200 labeled development sessions
 docs/competition_specification.md participant rules and evaluation protocol
 docs/agent_api_contract.json      machine-readable Agent contract

@@ -1,0 +1,30 @@
+# The scored configuration needs nothing installed.
+#
+# The agent is standard library only: shelf partitioning, phrase ranking, dialogue
+# state and the clarification policy import nothing outside CPython 3.11+. You can
+# run `python -m evaluator.local_evaluator` in a bare interpreter.
+#
+# This file is deliberately not a copy of the root `requirements.txt`. That one is
+# the manifest for the whole repository including the inactive components; this one
+# is the manifest for what the submitted agent actually executes. The difference is
+# the point: everything below is optional.
+
+# --- Optional: the retained fallback retrieval routes -----------------------
+# numpy is imported lazily, inside functions in starter/retrieval/facets.py,
+# starter/retrieval/dense.py and starter/ranking/rarity.py. It is only ever loaded
+# if the artifacts/retrieval/ bundle exists, and the bundle only matters if a turn
+# fails to resolve a shelf - which did not happen on any of the 800 sessions across
+# the public and three synthetic sets. Install this only if you also intend to run
+# `python -m scripts.build_retrieval_index`.
+#
+# numpy>=2.3.5,<3
+
+# --- Optional: the LLM shortlist reranker (off by default) ------------------
+# Never used for any reported score. The one time it was measured it cost 0.014
+# TechnicalScore (see P17-E001 in docs/EXPERIMENT_LOG.md). Enabling it requires
+# TECHJAM_PHASE6_MODE, a provider credential passed through the environment, and
+# network access. Install only the line matching TECHJAM_LLM_PROVIDER.
+#
+# anthropic>=0.116.0          # provider=anthropic (default), ANTHROPIC_API_KEY
+# google-genai>=1.0.0         # provider=gemini,    GEMINI_API_KEY
+# openai>=2.0.0               # provider=nvidia,    NVIDIA_API_KEY
