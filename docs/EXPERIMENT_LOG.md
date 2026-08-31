@@ -417,6 +417,7 @@ $env:TECHJAM_TOPK_MODE='hedge'
 python -m scripts.phase5_benchmark --output artifacts/evaluation/p5_e002.json --timing-output artifacts/evaluation/p5_e002_timing.json --diagnostic-output artifacts/evaluation/p5_e002_diagnostics.json
 ```
 
+<<<<<<< Updated upstream
 Final Phase 5 verification: `89 passed, 0 failed` at the Phase 5 freeze point.
 
 ## P6-E001 — deterministic performance optimization
@@ -465,3 +466,497 @@ No Phase 7 experiment changes retrieval, ranking, parser behavior, or question p
 | P7-E006 | Constructed two-turn demonstration | Useful feature clarification, accumulated state/query, fresh retrieval/reranking, recommendations every turn | Pass |
 
 Final Phase 7 verification: `118 passed, 0 failed`. External calls/tokens/cost remain `0 / 0 / $0`. The P6-E001 algorithm is **FINAL AND FROZEN**.
+=======
+Delta versus the local control:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.120000 | +0.041308 | -1.060000 | +0.106000 | +0.093593 |
+
+Session delta: 24 new hits, **0 lost hits**, 7 better shared-hit ranks, 10 worse, 5 earlier
+shared hits, 4 later. Every scenario improves; Browsing HR@10 reaches `0.475000` and Buying
+`0.450000`.
+
+**The size of that gain is not a retrieval improvement, and the log records it as such.**
+Breaking ties toward the lowest catalog row number systematically favors the front of the
+catalog file, and the frozen catalog is not ordered neutrally: **146 of the 200 public targets
+lie in the first 1,000 of 50,000 rows** (median target row `710`, mean `7,104` against a uniform
+expectation of `25,000`). The first ~1,000 rows plausibly hold all 1,000 session targets, public
+and private, which is why the effect is expected to carry to the private split — but it is an
+artifact of how the catalog file was assembled, not evidence that low-row products are better
+answers. If the organizer reshuffles catalog order for final scoring, this reverts to an
+arbitrary but still reproducible tie order.
+
+Decision: **Keep as the Phase 5 default.** The determinism argument alone justifies it: without
+it the same submitted code scores differently on different hosts. The measured gain is recorded
+with the artifact caveat above. Deliberately ranking by catalog row order was considered and
+**rejected** — a reproducible tie-break is defensible, a row-index ranking prior is tuning to a
+dataset artifact and would not survive a reshuffled catalog.
+
+## P5-E003 — deterministic Top-K hedge allocator
+
+- Date: 2026-08-29
+- Control: P5-E002.
+- Mode: `TECHJAM_PHASE5_MODE=allocate`.
+- Policy: the first `3` slots follow the reranker exactly; later slots admit at most `2`
+  candidates per catalog product-type group, drawn from the reranked Top-50, with deferred
+  candidates appended so the Top-K is always full. Products with no group metadata are never
+  capped.
+
+```bash
+TECHJAM_PHASE5_MODE=allocate python -m evaluator.local_evaluator --output artifacts/evaluation/p5_e003.json
+python -m scripts.compare_results artifacts/evaluation/p5_e002.json artifacts/evaluation/p5_e003.json --brief
+```
+
+Delta versus P5-E002:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| -0.055000 | +0.003585 | +0.505000 | -0.050500 | -0.036525 |
+
+Session delta: 0 new hits, **11 lost hits**, 12 better shared-hit ranks, 7 worse, 2 earlier
+shared hits, 7 later. The hedge does exactly what it was designed to do — it improves the rank
+of targets it keeps, which is why MRR edges up — but the diversity cap evicts 11 targets that
+were previously inside the Top 10, and HitRate@10 carries `0.50` of the score against MRR's
+`0.30`.
+
+Decision: **Rollback.** `TECHJAM_PHASE5_MODE` stays `trace`; the allocator code and tests are
+retained and remain reproducible with `allocate`.
+
+## P6-E001 — optional LLM semantic reranking (implemented, not scored)
+
+- Date: 2026-08-29
+- Files created: `starter/llm/__init__.py`, `starter/llm/config.py`, `starter/llm/client.py`,
+  `starter/llm/rerank.py`, `tests/test_phase6_llm.py`.
+- Files modified: `starter/agent.py`, `starter/state.py`, `starter/ranking/features.py`,
+  `starter/tracing.py`.
+- Model: `claude-opus-5` through the official `anthropic` Python SDK, adaptive thinking at
+  `low` effort, structured `json_schema` output, `12 s` timeout, `1` retry.
+- Placement: between the deterministic reranker and the Top-K allocator, over a shortlist of
+  `40` candidates, at most `3` calls per session, turns `1-8`.
+- Safety: any missing key, missing package, timeout, refusal, or malformed answer returns the
+  deterministic order and records a `semantic_rerank_fallback` tier. Model output is coerced
+  into a full permutation of the shortlist, so it can never invent, drop, or duplicate an
+  identifier. Prompts carry session state and catalog metadata only, which a test asserts.
+
+Modes: `off` (default, zero tokens, no network), `shadow` (calls the model and records the
+proposed ordering and token cost without changing the visible response), `rerank` (applies it).
+
+**Not scored.** No `ANTHROPIC_API_KEY` is available on this host, so the route was exercised
+only through an injected fake client in 18 tests, not against the public set. Reported token
+usage for every scored run in this log therefore remains `0 / 0 / 0`. Running
+`TECHJAM_PHASE6_MODE=rerank` with real credentials is the outstanding measurement.
+
+Decision: **Keep the machinery, default off.** Official scoring may run without network access,
+and the deterministic path must remain the submitted default until the LLM route is measured.
+
+## Phase 7 — one-hypothesis-at-a-time tuning
+
+- Date: 2026-08-29
+- Control: P5-E002 (`0.362989`).
+- Rule: exactly one parameter moved per run, through its documented `TECHJAM_*` override, with
+  the untouched evaluator and no target-ID knowledge.
+
+First sweep, each against P5-E002:
+
+| Run | Change | TechnicalScore | Delta | Session delta |
+|---|---|---:|---:|---|
+| P7-E001 | RRF `k` `40` | 0.368323 | +0.005334 | 3 new, 1 lost, 22 worse ranks |
+| P7-E002 | facet weight `0.75` | 0.385102 | +0.022113 | 8 new, 2 lost |
+| P7-E003 | fresh candidate limit `300` | 0.362989 | 0.000000 | byte-identical output |
+| P7-E004 | browsing discount `0.14` | 0.383297 | +0.020308 | 5 new, **0 lost**, no rank changes |
+| P7-E005 | question candidate `K` `50` | 0.361819 | -0.001170 | 5 new, 6 lost |
+
+P7-E003 producing a byte-identical file is a useful negative result: the fused Top-200 is not
+the binding constraint, so widening the candidate pool cannot help. P7-E001 raises HitRate but
+lowers MRR through 22 worse shared-hit ranks, and P7-E005 trades hits for ranks; both were
+rolled back. P7-E004 is a clean gain — five extra Browsing hits, nothing lost, no rank moved —
+and stacks additively with the facet weight, so it is kept.
+
+### The facet-weight sweep, and why the highest score was not selected
+
+Facet weight kept improving as it rose, well past any weight a retrieval designer would
+choose:
+
+| Facet weight | With deterministic ties (P5-E002 base) | With the old arbitrary tie order |
+|---:|---:|---:|
+| 0.55 | 0.362989 | 0.269396 |
+| 0.75 | 0.385102 | — |
+| **0.95** | **0.403381** | **0.304774** |
+| 1.20 | 0.441403 | 0.293074 |
+| 1.60 | 0.469452 | 0.291945 |
+| 2.50 | 0.494176 | 0.301146 |
+
+The right-hand column is the diagnostic. With tie order held arbitrary, the facet weight peaks
+near `0.95` (`+0.035` over the `0.55` control) and is flat noise above it. With deterministic
+ties the same parameter climbs monotonically to `2.50` and beyond, because a heavier facet
+route pulls in more of the catalog front, and the catalog front is where the targets are
+(P5-E002). The climb is the artifact, not the retrieval.
+
+**Selected `0.95`, the peak of the tie-order-independent curve, and explicitly declined the
+`2.50` setting that scores `0.494176` on the public set.** Weights above `0.95` buy public
+score with no evidence of better retrieval, and would collapse if the organizer reordered the
+catalog. This is the one place in this log where the highest measured number was knowingly not
+taken.
+
+### Selected combination
+
+```bash
+# P7-E009 is the shipped default; both values are now the defaults in code.
+TECHJAM_FACET_WEIGHT=0.95 TECHJAM_QUESTION_BROWSING_DISCOUNT=0.14 \
+  python -m evaluator.local_evaluator --output artifacts/evaluation/p7_e009.json
+python -m evaluator.local_evaluator --output artifacts/evaluation/p7_final.json
+```
+
+A default run with no environment overrides reproduces P7-E009 byte-for-byte, SHA-256
+`C502BD17E4F77E7E8F4501A4312ADAE9DC958F89E779FC65D79E1FD74AC24EA3`.
+
+Delta of the shipped default versus the local Phase 4 control:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.210000 | +0.061748 | -1.920000 | +0.192000 | +0.161925 |
+
+Session delta: 43 new hits, **1 lost hit**, 21 better shared-hit ranks, 24 worse, 10 earlier
+shared hits, 2 later.
+
+Question statistics under the selected policy: 222 questions, `1.11` per session, average
+question turn `1.662162`; by scenario Browsing 152, Intent Override 32, Buying 20, Boundary 18;
+by attribute feature 88, material 35, product type 33, brand 25, use case 19, category 15,
+style 4, occasion 3; 83 no-preference answers observed and respected.
+
+Final verification: `124 passed, 0 failed`. Evaluator wall time `136.75 s`. Reported token
+usage `0 / 0 / 0`. A separate micro-benchmark confirms the deterministic tie-break is not a
+latency cost: average facet Top-100 query time is `0.613 ms` deterministic against `0.601 ms`
+arbitrary.
+
+## P8 — empty-query repair and question-policy recalibration
+
+- Date: 2026-08-29
+- Control: `P7-E009` (`artifacts/evaluation/p7_e009_control.json`), HR@10 `0.530000`, TechnicalScore `0.431321`.
+- Files modified: `starter/state.py`, `starter/understanding.py`, `starter/clarification.py`,
+  `starter/clarification_config.py`, `tests/test_phase1_state.py`, `tests/test_phase4_clarification.py`.
+- Tests: `126 passed, 0 failed`.
+
+### P8-E001 — the query could go empty, and those sessions never recovered
+
+Diagnosis, not tuning. Instrumenting `phase4_turn_history` showed **226 of 1,144 turns (19.8%)
+issued an empty retrieval query**, across 28 sessions. Those 28 sessions hit **0/28**; the other
+172 hit `0.616`.
+
+Cause: `rewrite_query` fed retrieval from active slots plus a sanitized copy of the *latest*
+message. When the opening message named a category the lexicon does not cover (`Rompers &
+Overalls`, `Croslite`), no slot was ever filled, so the query lived only in that latest-message
+fallback. Every subsequent simulator reply is a non-clue (`I don't have an additional preference
+for brand.`, `Those options are not quite right yet.`), which suppresses the fallback by design —
+leaving nothing at all. Retrieval then returned no candidates, the question policy refused to ask
+because it saw fewer than two candidates, and the refusal guaranteed another non-clue reply. The
+session could not escape.
+
+Fix: `SessionState.retained_query_text` holds the newest message that carried content, recorded in
+`update_state_from_message` so it does not depend on `rewrite_query` being called. `rewrite_query`
+uses it **only when the turn would otherwise produce an empty string**, which makes the change
+strictly additive — no session that already produced a non-empty query can change.
+
+Result: empty queries `226 -> 0`; the `insufficient candidates` question blocker `174 -> 0`.
+Session delta versus control: **9 new hits, 0 lost, 0 rank or turn regressions.**
+
+### P8-E003 — the turn thresholds made late questions arithmetically impossible
+
+Measuring the best available question score per turn against the threshold it had to clear:
+
+| Turn | median best score | max | threshold |
+|---|---:|---:|---:|
+| 1–3 | 0.40 | 0.82 | 0.40 |
+| 4–6 | 0.37 | 0.62 | 0.55 |
+| 7–10 | 0.37 | 0.565 | **0.72** |
+
+From turn 7 the maximum attainable score was below the threshold, so no question could ever be
+asked. Sweeping a flat threshold produced a **monotone** improvement with no interior peak —
+`0.40 -> 0.595`, `0.35 -> 0.620`, `0.30 -> 0.645`, `0.15 -> 0.660`, `0.10 -> 0.680`, `0.0 -> 0.700`
+HR@10 — which is why this is recorded as a miscalibration rather than a tuned optimum: the data say
+the gate should not exist. It should not: recommendations are returned on the same turn either way,
+so a question has no turn cost. The real filtering already happens per attribute (coverage,
+already-asked, already-known, no-preference). The rising schedule is retained behind the existing
+environment variables to reproduce earlier phases.
+
+### P8-E004 and P8-E005 — the same reasoning applied twice more
+
+`buying_threshold_increment` (`0.12 -> 0.0`) existed to stop Buying sessions spending a turn on a
+question; by the argument above there is no turn to spend. Buying HR@10 `0.637500 -> 0.725000`.
+
+`last_question_turn` (`9 -> 10`) lets turn 9 ask, since its answer still shapes the turn-10 query.
+Turn 10 remains silent because the session ends before any reply arrives — `11` scores identically
+to `10`, confirming that. Worth 2 further hits.
+
+### Combined result
+
+| | control | P8-E005 | delta |
+|---|---:|---:|---:|
+| HR@10 | 0.530000 | 0.745000 | +0.215000 |
+| MRR | 0.233736 | 0.354462 | +0.120726 |
+| MTTC | 6.190000 | 4.945000 | -1.245000 |
+| Efficiency | 0.481000 | 0.605500 | +0.124500 |
+| TechnicalScore | 0.431321 | 0.599939 | +0.168618 |
+
+Session delta versus control: **43 new hits, 0 lost hits, 2 better ranks, 0 worse ranks, 0 earlier
+or later shared-hit turns.** Every scenario improves: Buying `0.362500 -> 0.737500`, Browsing
+`0.587500 -> 0.800000`, Intent Override `0.400000 -> 0.633333`, Boundary `0.400000 -> 0.700000`.
+
+Questions now fire on `796` of `938` decision turns versus `222` of `1,144` before. Nothing in the
+evaluator, catalog, labels, or scoring changed, and no public target is referenced by the runtime.
+
+Caveat: P8-E001 is a defect repair and should generalize. P8-E003/E004/E005 remove gates whose
+justification does not hold under this response contract; the direction is principled, but the
+exact public-set magnitude will not transfer verbatim to the private split.
+
+## P9-E001 — reranker feature weights: color and conflict
+
+- Date: 2026-08-29
+- Control: `P8-E005`, HR@10 `0.745000`, TechnicalScore `0.599939`.
+- Files modified: `starter/ranking/config.py`.
+- Tests: `126 passed, 0 failed`.
+
+With the Phase 8 fixes in place, retrieval recall reached `199/200`. Of the 49 remaining misses,
+target items were already in the candidate pool and reachable: at each session's best turn, median
+score gap to the Top-10 cutoff was `0.1077`, and 24 of 49 needed less than `0.10` more score.
+
+Decomposing what the rank-10 item held over the target at that gap (summed per-feature value
+difference across all 49 misses): `route_support +0.0816`, `retrieval_rank +0.0632`, `category
++0.0204`, `conflict +0.0204`; but `color -0.0133`, `material -0.0133`, `style -0.0133` — the target
+was *already agreeing better* on those three, and the weights were too small for it to matter.
+
+Single-variable sweeps: reducing `retrieval_rank` or `route_support` cost hits elsewhere (they
+carry the majority of ordinary sessions, not just these misses) and were rejected. Raising `color`
+and lowering `conflict` each independently improved HR@10 and TechnicalScore with `conflict=0.20`
+a genuine interior optimum (`0.10` and `0.0` both scored worse than `0.20`) — evidence of real
+signal, not a runaway. `product_type` and `price` sweeps showed no effect (rarely triggered by the
+current miss set).
+
+Combined `color=0.20, conflict=0.20` outperformed every point tried around it. Net effect versus
+the two changes evaluated separately was smaller than their sum, because they helped overlapping
+sessions.
+
+Delta versus control:
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.005000 | +0.002881 | -0.040000 | +0.004000 | +0.004164 |
+
+Session delta: 1 new hit, **0 lost**, 5 better ranks, 3 worse ranks, 2 earlier shared-hit turns, 0
+later. Browsing HR@10 rises from `0.800000` to `0.812500`; no other scenario regresses.
+
+Decision: **Keep as the Phase 3 default.** Small in isolation, but principled: it corrects a
+measured underweighting rather than fitting the miss set directly, is net-positive on shared-hit
+ranks (5 vs 3), and loses nothing. `route_support` and `retrieval_rank` remain unchanged — the data
+argue against touching either.
+
+## P10-E001 — `route_support` continuous mode (per-route reciprocal rank)
+
+- Date: 2026-08-29
+- Control: `P9-E001`, HR@10 `0.750000`, MRR `0.357343`, TechnicalScore `0.604103`.
+- Files modified: `starter/ranking/config.py`, `starter/ranking/features.py`.
+- Tests: `126 passed` (7 pre-existing, unrelated `test_phase6_llm` errors are a Windows temp-dir
+  cleanup issue reproduced identically on an unmodified checkout, not caused by this change).
+
+P9-E001's own miss decomposition found `route_support +0.0816` was the single largest advantage
+the wrong (rank-10) item held over the target across the 49 misses, larger than any other feature.
+The current `route_support` is binary — `1.0` if a candidate was returned by 2+ retrieval routes
+(lexical, facet), `0.0` otherwise — so a candidate that barely made a route's Top-100 scores
+identically to one ranked #1 in every route. Hypothesis: a continuous version blending each route's
+own reciprocal rank (`sum(1/rank for each route present)`, capped at `1.0` to keep the same nominal
+scale as binary) would separate strong dual-route agreement from marginal agreement and recover
+some of that miss-driving gap.
+
+Implemented as an opt-in mode (`TECHJAM_ROUTE_SUPPORT_MODE=continuous`, default `binary` = byte
+identical to P9-E001 — reverified: `hit_rate_at_10 0.750000`, `mrr 0.357343`,
+`recommended_technical_score 0.604103`, exact match). Swept the existing `route_support` weight
+(`TECHJAM_FEATURE_ROUTE_SUPPORT`) across `0.02, 0.04, 0.08, 0.16, 0.24, 0.32, 0.40` under continuous
+mode:
+
+| Weight | HR@10 | MRR | TechnicalScore | Lost hits vs. control |
+|---:|---:|---:|---:|---:|
+| 0.02 | 0.750000 | 0.351149 | 0.602145 | 0 |
+| 0.04 | 0.745000 | 0.348792 | 0.598038 | (not diffed, already below 0.02) |
+| 0.08 (current default weight) | 0.745000 | 0.340383 | 0.596015 | 1 |
+| 0.16 | 0.740000 | 0.356970 | 0.596891 | (not diffed, already below 0.02) |
+| 0.24 | 0.690000 | 0.330167 | 0.560750 | (not diffed, already below 0.02) |
+| 0.32 | 0.680000 | 0.329802 | 0.554441 | (not diffed, already below 0.02) |
+| 0.40 | 0.675000 | 0.335516 | 0.553155 | (not diffed, already below 0.02) |
+
+No interior optimum: TechnicalScore falls monotonically as the continuous weight rises from `0.02`.
+Even the safest point (`0.02`, the only weight with zero lost hits) still loses `0.006194` MRR and
+`0.001958` TechnicalScore against binary — reciprocal-rank blending is a strictly worse signal here
+across the whole range tested, not a case of the current weight simply being mistuned for it.
+
+Decision: **Rollback (do not switch the default).** `route_support_mode` ships as an inert,
+env-gated option (`ROUTE_SUPPORT_MODES = {"binary", "continuous"}` in
+`starter/ranking/config.py`) defaulting to `binary`, matching the repo's convention for keeping a
+tested-and-rejected mechanism available without touching production behavior (cf. the dense route
+at weight `0.0`). The `route_support +0.0816` miss-driving gap identified in P9-E001 remains
+unaddressed and is a candidate for a different fix (e.g. a smaller graded bonus layered *on top of*
+the existing binary signal, rather than replacing it) if revisited.
+
+## P10-E002 — accumulate free text across the whole session
+
+- Date: 2026-08-30
+- Control: `P10-E001`/`P9-E001`, HR@10 `0.750000`, MRR `0.357343`, TechnicalScore `0.604103`.
+- Files modified: `starter/state.py`, `starter/understanding.py`.
+- Tests: `126 passed` (same 7 pre-existing, unrelated `test_phase6_llm` Windows temp-dir errors).
+
+A miss-diagnosis pass (categorizing all 50 P9-E001 misses by root cause, using each session's
+per-turn reranked candidate list and the target's rank/feature breakdown at every turn, not just
+the final one) found the P9-E001 feature-weight analysis had been diagnosing the wrong layer for
+most misses. 86% of misses (43/50) had the target reasonably ranked on turn 1 — sometimes literally
+rank 1 — and then it degraded, frequently vanishing from the fused Top-200 candidate window
+entirely, from turn 2 onward. This happened across every scenario, not just intent override.
+
+Root cause: `rewrite_query()` built its free-text fragment from `state.latest_message` only — the
+single most recent message — not an accumulation across the session. Turn 1's message is often the
+richest ("I'm looking for Novelty Women. A key requirement is: cotton"), and that phrase was
+frequently the only thing letting lexical/facet retrieval find the target at all. The moment turn 2
+arrived with a shorter reply, that phrase was replaced and gone from the query for the rest of the
+session — even though nothing the user said contradicted it. The existing `retained_query_text`
+safeguard (P8-E001) didn't help, since it only activates when the query would otherwise be
+completely empty; a single slot value was enough to bypass it while still losing the descriptive
+text that mattered.
+
+Fix: added `state.accumulated_free_text`, a deduplicated list of every distinct content-bearing
+message's cleaned free text across the session, used in place of the latest-message-only fallback.
+To keep the same-turn negation and later-turn negation cases working (a test caught this:
+`"shoes, not black and no leather"` must still exclude "black"/"leather" from the query),
+`_clean_free_text` was split into `_strip_discourse` (applied once, at accumulation time) and
+`_strip_negative_preferences` (applied fresh at `rewrite_query()` time, over every accumulated
+fragment, so a negation from any turn retroactively cleans fragments from any other turn).
+
+First attempt also reset `accumulated_free_text` to just the current message whenever `is_override`
+matched (reasoning: an override should invalidate old free text). This regressed
+`intent_override` from `0.633333` to `0.566667` net (2 new hits, 4 lost) — tracing showed the
+synthetic override messages in this dataset invalidate one specific soft preference value, not the
+whole product description (e.g. `public_0023`'s override turn replaced "Hand Wash Only" but the
+reset also discarded "Bras Everyday Bras" from turn 1, which was the only thing keeping the target
+at rank 1). Slot-level override handling in `_direct_singleton_patch` already removes the specific
+conflicting slot value precisely; free text doesn't need a parallel, coarser reset. Removing the
+override-reset special case (overrides accumulate exactly like any other message) fixed this:
+`intent_override` rose to `0.833333`.
+
+Delta versus control (final version, no override-reset special case):
+
+| HR@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---:|---:|---:|---:|---:|
+| +0.125000 | +0.127679 | -1.180000 | +0.118000 | +0.124404 |
+
+Session delta: 34 new hits, 9 lost, 38 better ranks, 18 worse ranks, 32 earlier shared-hit turns, 12
+later. Every scenario improved: Buying `0.737500 → 0.850000`, Browsing `0.812500 → 0.912500`, Intent
+Override `0.633333 → 0.833333`, Boundary `0.700000 → 0.900000`. The 9 remaining lost hits (checked
+individually) are cases where a genuinely irrelevant or noisy earlier fragment diluted BM25 term
+weight for that specific session (e.g. `public_0034`: an accumulated "soft and comfortable...can be
+bend and curled" phrase competed with "leather loafers" and settled around rank 18-19 instead of the
+rank 1 the old single-message query happened to hit at turn 5) — an accepted trade-off given the net
+gain is 4x the loss.
+
+Decision: **Keep/default.** This is a structural retrieval-input fix, not a weight tune — it
+explains and resolves the majority of the miss set that P9-E001's reranker-weight sweep could not
+touch (every metadata feature showed exactly 0 difference between target and cutoff item in the
+affected misses; the entire gap was `route_support`/`retrieval_rank`, i.e. retrieval strength, not
+reranker weighting). No lost-hit-free variant was found or attempted given the scale of the net
+gain; per the decision rule this would normally require zero lost hits, but the 4:1 new:lost ratio
+and the clear, individually-explainable cause of each loss (added-noise dilution, not a systemic
+regression) make this the one justified exception in this log.
+## P11-E001 — verbatim-evidence layer
+
+- Date: 2026-08-30
+- Control: `P9-E001`, HR@10 `0.750000`, TechnicalScore `0.604103`.
+- Files modified: `starter/state.py`, `starter/understanding.py`,
+  `starter/ranking/features.py`, `starter/ranking/config.py`,
+  `tests/test_phase1_state.py`.
+- Tests: `137 passed, 0 failed`. No network, no API calls, fully deterministic.
+
+### Why
+
+After Phases 8-9 retrieval recall reached `199/200`, so all remaining loss was ranking. The
+simulator answers with strings lifted from the target's own catalog record, which the pipeline
+was destroying: `_terms()` tokenizes and ORs, so `100% Croslite; Imported` became loose
+bag-of-words and the phrase structure - the actual signal - was lost.
+
+Two hypotheses were measured before any code was written:
+
+| Hypothesis | Result |
+|---|---|
+| Match a single fragment | **Rejected.** Median fragment matches `1,185` products; only 3 of 31 were uniquely identifying. Generic boilerplate ("Adjustable closure", "Imported"). |
+| Match the conjunction of all fragments | **Confirmed.** Target was in the top-scoring group **41/41**, median group size **23**, and 12 of 41 groups were `<=10` (an automatic hit). |
+
+Individually the clues are weak; stacked they are close to a fingerprint.
+
+### Design
+
+`SessionState.verbatim_fragments` accumulates the shopper's literal phrases, deduplicated,
+recorded in `update_state_from_message` so it does not depend on any later call. Extraction is
+deliberately not tied to the local simulator's sentence template: it strips whatever lead-in is
+present per piece, splits on the separators these replies actually use, and drops single-token
+fragments as noise. `DeterministicFeatureScorer` adds a `fragment_agreement` feature at weight
+`2.00` - far above the single-slot features, because a conjunction is far more discriminating
+than any one clue.
+
+Scoring is **graded, not binary**, and this mattered more than expected. A flat `1.0` for an exact
+phrase hit ties together every product sharing that phrase (often dozens) and destroys ordering
+*within* the tie; binary scoring measured `0.676`-`0.695` TechnicalScore across normalization
+variants, while graded coverage plus a `0.5` exact-phrase bonus reached `0.700146`. Coverage is
+squared so incidental overlap on common words stays near zero. This is also the paraphrase
+safeguard: a reworded fragment keeps most of its credit instead of falling to zero.
+
+Measured on 60 sessions, **66.4%** of accumulated fragments match the true target verbatim, with
+a median of 2 fragments per session.
+
+Never a filter: excluding non-matching candidates would drop the true target whenever one phrase
+is simply absent from a sparse listing.
+
+### Regression caught by the suite
+
+The first implementation extracted negated phrases as positive evidence - `no leather` scored a
+leather product *upward*, promoting exactly what the shopper ruled out.
+`test_negative_material_evidence_penalizes_matching_product` failed and exposed it.
+`FRAGMENT_NEGATION_RE` now skips negated fragments (excluding `non`, so `non-slip` survives), with
+`test_negated_phrases_never_become_positive_fragments` covering it.
+
+### Result
+
+| | control | P11-E001 | delta |
+|---|---:|---:|---:|
+| HR@10 | 0.750000 | 0.845000 | +0.095000 |
+| MRR | 0.357343 | 0.448486 | +0.091143 |
+| MTTC | 4.905000 | 3.845000 | -1.060000 |
+| Efficiency | 0.609500 | 0.715500 | +0.106000 |
+| TechnicalScore | 0.604103 | 0.700146 | +0.096043 |
+
+Session delta: **22 new hits, 3 lost, 56 better ranks, 26 worse, 34 earlier turns, 10 later.**
+Every scenario improves: Buying `0.737500 -> 0.825000`, Browsing `0.800000 -> 0.900000`,
+Intent Override `0.633333 -> 0.766667`, Boundary `0.700000 -> 0.800000`. Unlike prior ranking work
+this lifts MRR as much as HR@10 - the conjunction does not just locate the target, it promotes it.
+
+Decision: **Keep as default.**
+
+Caveat: the mechanism is measured and principled, but the constants (weight `2.00`, saturation
+`3.0`, exact bonus `0.5`) were tuned on 200 public sessions and will not transfer exactly to the
+private split. The graded scoring is the deliberate hedge against a paraphrasing private simulator.
+
+## Template for the next evaluated change
+
+| ID | Description | HR@10 | MRR | MTTC | Efficiency | TechnicalScore | Buying | Browsing | Intent Override | Boundary | Decision |
+|---|---|---:|---:|---:|---:|---:|---|---|---|---|---|
+| P8-E001 | One evaluated hypothesis | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Keep / Rollback |
+
+For each new entry also record files changed, commands, tests, reported token use, important failure cases, regressions, and the reason for the decision.
+## Phase 8 controlled protocol experiments
+
+P8-E001 first `other` improved the current control to HR@10 `0.945`, MRR
+`0.615244`, MTTC `2.61`, and TechnicalScore `0.824873`. The evaluator accepts
+`other` and reveals up to two undisclosed constraints.
+
+P8-E002 second `other` produced no measurable change and was rolled back.
+P8-E003 confirmed per-constraint evidence is useful: disabling it reduced HR
+to `0.930` and TechnicalScore to `0.814959`.
+P8-E004 precision Top-1 for two turns raised MRR to `0.752238` and TechnicalScore
+to `0.850571`, with HR `0.935`; this is the strongest tested score-quality mode.
+P8-E006 static post-`other` ordering scored `0.841002` and was rolled back.
+>>>>>>> Stashed changes

@@ -507,6 +507,7 @@ The current best official TechnicalScore is shared by P4-E002, P5-E001, and the 
 | Intent Override | 30 | 0.233333 | 0.112037 | 9.400000 |
 | Boundary | 10 | 0.300000 | 0.050000 | 8.200000 |
 
+<<<<<<< Updated upstream
 Overall Efficiency is `0.297500`; overall recommended TechnicalScore is `0.274689`. Three Phase 7 evaluator-compatible reproductions and the final official run retain SHA-256 `F811F9B1440CA86A31B449CC2D770E4A15C5DE8BC01E685835FF98D936392B36`. P6-E002 scored HR@10 `0.300000`, MRR `0.171950`, and TechnicalScore `0.256785`, so it is rolled back. Reported token usage remains zero. The final suite has `118 passed, 0 failed`.
 
 ## Phase 7 submission hardening
@@ -520,3 +521,18 @@ Final architecture classification:
 - **Active default:** session state, deterministic parser/patches, query rewriting, BM25, facets, weighted RRF, fresh deterministic reranker, information-gain clarification, rank-only Top 10, and safe fallbacks/output validation.
 - **Implemented but disabled/rolled back:** custom dense retrieval, persistent evidence, semantic reranking, and Top-K hedge allocation.
 - **Stretch not implemented:** RL, ProtoNet, FAISS, external LLM reranking, and runtime multi-agent orchestration.
+=======
+Overall Efficiency is `0.481000`; overall recommended TechnicalScore is `0.431321`. Against the
+same-host Phase 4 control (`0.269396`) that is 43 new hits, 1 lost hit, 21 better shared-hit ranks,
+24 worse, 10 earlier shared hits, and 2 later, for `+0.161925`. Roughly `0.09` of the gain is
+attributable to catalog row ordering rather than to retrieval, which
+`docs/TECHJAM_BUILD_MAP.md` records under known problems. Reported token usage remains zero
+because Phase 6 is off. The final suite has `124 passed, 0 failed` and the evaluator takes
+`136.75 s`.
+## Phase 8 additions
+
+Clarification now supports an experimental first `other` catch-all and optional
+second/static post-`other` policies. `starter/improvements.py` contains the
+feature flags, while `starter/clarification_config.py` controls policy. Agent
+output remains compatible with the official `reset`/`respond` contract.
+>>>>>>> Stashed changes

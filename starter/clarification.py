@@ -242,7 +242,8 @@ class ConservativeQuestionPolicy:
     def __init__(self, config: PhaseFourConfig) -> None:
         self.config = config
 
-    def decide(self, analysis: QuestionAnalysis, state: SessionState) -> QuestionDecision:
+    def decide(self, analysis: QuestionAnalysis, state: SessionState, *,
+               allow_confidence_stop: bool = True) -> QuestionDecision:
         if not self.config.asks_questions:
             return QuestionDecision(None, None, None, None, "question behavior disabled")
         if state.turn >= 9:
@@ -251,8 +252,37 @@ class ConservativeQuestionPolicy:
             return QuestionDecision(None, None, None, None, "insufficient candidates")
         if analysis.candidate_uncertainty < self.config.minimum_uncertainty:
             return QuestionDecision(None, None, None, None, "candidate uncertainty too low")
-        if analysis.top_score_confidence > self.config.maximum_top_confidence:
+        if allow_confidence_stop and analysis.top_score_confidence > self.config.maximum_top_confidence:
             return QuestionDecision(None, None, None, None, "top candidate confidence sufficient")
+        if self.config.first_other and state.turn == 1 and not _already_known("occasion", state):
+            return QuestionDecision(
+                ask_attribute="occasion",
+                api_attribute="other",
+                message="Are there any other important preferences or requirements?",
+                threshold=0.0,
+                reason="first clarification uses simulator catch-all other",
+            )
+        if (self.config.second_other and self.config.first_other and 2 <= state.turn <= 6
+                and _already_known("occasion", state)
+                and not state.slots.get("occasion")
+                and "occasion" not in state.no_preference_attributes):
+            return QuestionDecision(
+                ask_attribute="occasion",
+                api_attribute="other",
+                message="Are there any other important preferences or requirements?",
+                threshold=0.0,
+                reason="second catch-all other remains eligible",
+            )
+        if self.config.static_post_other and "occasion" in state.asked_attributes:
+            for candidate in ("color", "material", "style", "size_fit", "brand", "use_case", "feature"):
+                if not _already_known(candidate, state) and candidate not in state.asked_attributes:
+                    return QuestionDecision(
+                        ask_attribute=candidate,
+                        api_attribute=API_ATTRIBUTES[candidate],
+                        message=QUESTION_TEMPLATES[candidate],
+                        threshold=0.0,
+                        reason="static post-other clarification order",
+                    )
         attribute = analysis.chosen_best_attribute
         if attribute is None:
             return QuestionDecision(None, None, None, None, "no useful unasked attribute")

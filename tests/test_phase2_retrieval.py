@@ -230,7 +230,9 @@ class AgentHybridIntegrationTest(unittest.TestCase):
                 lowered = query.casefold()
                 for expected in ("shoes", "travel", "water-resistant", "comfortable"):
                     self.assertIn(expected, lowered)
-            self.assertEqual(lexical_queries[-1], dense.queries[-1])
+            # Query expansion may issue a second lexical query; the dense lane
+            # intentionally receives the unexpanded accumulated state query.
+            self.assertIn(dense.queries[-1], lexical_queries)
 
     def test_override_state_feeds_fresh_retrieval_query(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

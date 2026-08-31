@@ -39,6 +39,9 @@ class PhaseFourConfig:
     browsing_threshold_discount: float = 0.08
     max_known_attributes: int = 4
     score_weights: QuestionScoreWeights = QuestionScoreWeights()
+    first_other: bool = False
+    second_other: bool = False
+    static_post_other: bool = False
 
     def __post_init__(self) -> None:
         if self.mode not in PHASE4_MODES:
@@ -90,6 +93,9 @@ class PhaseFourConfig:
                 intent_relevance=_environment_float("TECHJAM_QUESTION_WEIGHT_INTENT", 0.50),
                 category_relevance=_environment_float("TECHJAM_QUESTION_WEIGHT_CATEGORY", 0.25),
             ),
+            first_other=os.getenv("TECHJAM_FIRST_OTHER", "1").strip().casefold() in {"1", "true", "yes"},
+            second_other=os.getenv("TECHJAM_SECOND_OTHER", "0").strip().casefold() in {"1", "true", "yes"},
+            static_post_other=os.getenv("TECHJAM_STATIC_POST_OTHER", "0").strip().casefold() in {"1", "true", "yes"},
         )
 
 

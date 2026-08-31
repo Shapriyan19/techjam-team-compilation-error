@@ -173,4 +173,18 @@ The measured deviation from the earlier three-route proposal is deliberate: the 
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
 - Tests: `118 passed, 0 failed` with pinned NumPy/artifacts
 
+<<<<<<< Updated upstream
 P6-E001 preserves these metrics and the frozen artifact hash exactly and is the Phase 7 control. P6-E002 lowered HR@10 to `0.300000` and TechnicalScore to `0.256785`, so semantic mode remains off.
+=======
+Versus the `P7-E009` control (`0.431321`), TechnicalScore is `+0.268825` across Phases 8-11.
+Retrieval recall measured over the public set is `199/200`, so the ceiling for ranking work is
+HitRate@10 `0.995`; `0.845000` of that is now realized. Phase 6 LLM reranking remains optional and
+off by default.
+## Phase 8 status
+
+Phase 8 validated first-`other` clarification and precision Top-1 as the most
+effective protocol-aware improvements. Dense, second-`other`, and static
+post-`other` modes remain experimental or rolled back. The recommended high
+TechnicalScore configuration is first `other` plus two precision turns; the
+recommended high-HR configuration uses first `other` without precision turns.
+>>>>>>> Stashed changes

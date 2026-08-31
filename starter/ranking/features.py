@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Mapping, NamedTuple
 
 from starter.ranking.config import FeatureWeights
+from starter.improvements import ImprovementConfig
 from starter.ranking.evidence import CandidateEvidence, FreshCandidate
 from starter.state import ConstraintStrength, SessionState, SlotValue
 
@@ -68,6 +69,14 @@ class ProductFeatures:
     style_values: tuple[str, ...]
     occasion_values: tuple[str, ...]
     feature_values: tuple[str, ...]
+<<<<<<< Updated upstream
+=======
+    # Whitespace-normalized, lowercased catalog text. Kept as a string (not just
+    # the n-gram set) because shopper fragments run longer than the n-gram cap.
+    normalized_text: str
+    identity_terms: frozenset[str] = frozenset()
+    specific_category_terms: frozenset[str] = frozenset()
+>>>>>>> Stashed changes
 
 
 @dataclass(frozen=True)
@@ -151,10 +160,16 @@ class CatalogFeatureStore:
 
 
 class DeterministicFeatureScorer:
-    def __init__(self, store: CatalogFeatureStore, weights: FeatureWeights) -> None:
+    def __init__(self, store: CatalogFeatureStore, weights: FeatureWeights,
+                 improvements: ImprovementConfig | None = None) -> None:
         self.store = store
         self.weights = weights
+<<<<<<< Updated upstream
         self._weighted_feature_items = _weighted_items(weights)
+=======
+        self.improvements = improvements or ImprovementConfig()
+        self._weighted_items = _weighted_items(weights)
+>>>>>>> Stashed changes
 
     def rank(
         self,
@@ -163,13 +178,26 @@ class DeterministicFeatureScorer:
         evidence: Mapping[str, CandidateEvidence] | None = None,
     ) -> list[ScoredCandidate]:
         scored: list[ScoredCandidate] = []
+<<<<<<< Updated upstream
         compiled_state = _compile_state(state)
+=======
+        # This cache lives for exactly one rank call: state changes cannot leave
+        # stale tokens or fragments behind. No candidate-dependent values enter it.
+        prepared = _prepare_state(state) if self.improvements.optimize else None
+>>>>>>> Stashed changes
         for candidate in fresh_candidates:
             product = self.store.get(candidate.parent_asin)
             if product is None:
                 continue
+<<<<<<< Updated upstream
             feature_values = self._feature_values(candidate, product, compiled_state, evidence)
             total = sum(feature_values[name] * weight for name, weight in self._weighted_feature_items)
+=======
+            feature_values = self._feature_values(candidate, product, state, evidence, prepared)
+            total = sum(feature_values[name] * weight for name, weight in self._weighted_items)
+            if self.improvements.shoppilot_features:
+                total += _shoppilot_bonus(state, product, self.improvements)
+>>>>>>> Stashed changes
             scored.append(
                 ScoredCandidate(
                     parent_asin=candidate.parent_asin,
@@ -189,33 +217,43 @@ class DeterministicFeatureScorer:
         product: ProductFeatures,
         state: CompiledRankingState,
         evidence: Mapping[str, CandidateEvidence] | None,
+        prepared: dict | None = None,
     ) -> dict[str, float]:
+        def agreement(slot, searchable, reliable):
+            return _slot_agreement(slot, searchable, reliable, None if prepared is None else prepared["tokens"])
         conflict = 0.0
-        category, category_conflict = _slot_agreement(
+        category, category_conflict = agreement(
             state.slots.get("category"), product.category_terms | product.all_terms, product.category_terms
         )
-        product_type, product_type_conflict = _slot_agreement(
+        product_type, product_type_conflict = agreement(
             state.slots.get("product_type"), product.category_terms | product.all_terms, product.category_terms
         )
-        brand, brand_conflict = _slot_agreement(
+        if self.improvements.category_evidence:
+            checked_category = _category_agreement(state.slots.get("category"), product)
+            checked_type = _category_agreement(state.slots.get("product_type"), product)
+            if not self.improvements.category_guard_only or checked_category[1]:
+                category, category_conflict = checked_category
+            if not self.improvements.category_guard_only or checked_type[1]:
+                product_type, product_type_conflict = checked_type
+        brand, brand_conflict = agreement(
             state.slots.get("brand"), product.brand_terms | product.all_terms, product.brand_terms
         )
-        color, color_conflict = _slot_agreement(
+        color, color_conflict = agreement(
             state.slots.get("color"), product.color_terms, product.color_terms
         )
-        material, material_conflict = _slot_agreement(
+        material, material_conflict = agreement(
             state.slots.get("material"), product.material_terms, product.material_terms
         )
-        use_case, use_case_conflict = _slot_agreement(
+        use_case, use_case_conflict = agreement(
             state.slots.get("use_case"), product.all_terms, frozenset()
         )
-        style, style_conflict = _slot_agreement(
+        style, style_conflict = agreement(
             state.slots.get("style"), product.style_terms | product.all_terms, product.style_terms
         )
-        occasion, occasion_conflict = _slot_agreement(
+        occasion, occasion_conflict = agreement(
             state.slots.get("occasion"), product.all_terms, frozenset()
         )
-        feature_overlap, feature_conflict = _slot_agreement(
+        feature_overlap, feature_conflict = agreement(
             state.slots.get("features"), product.all_terms, frozenset()
         )
         conflict = max(
@@ -228,7 +266,11 @@ class DeterministicFeatureScorer:
             style_conflict,
             occasion_conflict,
             feature_conflict,
+<<<<<<< Updated upstream
             _negative_conflict_compiled(state, product),
+=======
+            _negative_conflict(state, product, prepared),
+>>>>>>> Stashed changes
         )
         price, price_conflict = _price_compatibility_compiled(state, product.price)
         conflict = max(conflict, price_conflict)
@@ -253,6 +295,10 @@ class DeterministicFeatureScorer:
             "style": style,
             "occasion": occasion,
             "feature_overlap": feature_overlap,
+<<<<<<< Updated upstream
+=======
+            "fragment_agreement": _fragment_agreement(state, product, prepared),
+>>>>>>> Stashed changes
             "price": price,
             "persistence": persistence,
             "recency": recency,
@@ -290,14 +336,73 @@ def _compile_state(state: SessionState) -> CompiledRankingState:
     )
 
 
+<<<<<<< Updated upstream
+=======
+def _shoppilot_bonus(state: SessionState, product: ProductFeatures, config: ImprovementConfig) -> float:
+    """Small conjunction bonuses inspired by ShopPilot's evidence stack.
+
+    These bonuses are deliberately bounded so lexical/facet retrieval remains
+    the primary signal. They reward exact agreement only for known active slots.
+    """
+    active = []
+    for name in ("category", "product_type", "brand", "color", "material", "style", "use_case", "occasion", "features"):
+        slot = state.slots.get(name)
+        if slot is None:
+            continue
+        values = slot.value if isinstance(slot.value, tuple) else (slot.value,)
+        terms = [_tokens(str(value)) for value in values]
+        if not terms:
+            continue
+        active.append((name, terms, product))
+    if not active:
+        return 0.0
+    matched = 0
+    for name, values, item in active:
+        searchable = item.all_terms
+        if name == "color":
+            searchable = item.color_terms
+        elif name == "material":
+            searchable = item.material_terms
+        elif name == "brand":
+            searchable = item.brand_terms | item.all_terms
+        if any(value and value.issubset(searchable) for value in values):
+            matched += 1
+    coverage = matched / len(active)
+    bonus = config.shoppilot_coverage_bonus * coverage
+    if matched == len(active) and len(active) >= 2:
+        bonus += config.shoppilot_full_bonus  # bounded full-match conjunction bonus
+    category = state.slots.get("category")
+    if category is not None and _tokens(str(category.value)).issubset(_tokens(product.normalized_text)):
+        bonus += config.shoppilot_category_bonus  # category-tail/title exactness
+    return min(bonus, config.shoppilot_coverage_bonus + config.shoppilot_full_bonus + config.shoppilot_category_bonus)
+
+
+def _route_support(route_ranks: tuple[tuple[str, int], ...], mode: str) -> float:
+    if mode == "continuous":
+        # Reciprocal rank per route rewards a candidate that a route ranked
+        # highly more than one that barely made that route's Top-N, unlike
+        # the binary mode below, which awards the same bonus for any 2+ route
+        # presence regardless of how strong each route's own ranking was.
+        return min(sum(1.0 / rank for _, rank in route_ranks if rank > 0), 1.0)
+    return float(min(max(len(route_ranks) - 1, 0), 1))
+
+
+>>>>>>> Stashed changes
 def _slot_agreement(
     slot: CompiledSlot | None,
     searchable_terms: frozenset[str],
     reliable_terms: frozenset[str],
+    token_cache: dict | None = None,
 ) -> tuple[float, float]:
     if slot is None:
         return 0.0, 0.0
+<<<<<<< Updated upstream
     matches = [bool(value and value.issubset(searchable_terms)) for value in slot.values]
+=======
+    values = slot.value if isinstance(slot.value, tuple) else (slot.value,)
+    value_terms = [token_cache[str(value)] if token_cache is not None else _tokens(value) for value in values]
+    matches = [bool(terms and terms.issubset(searchable_terms)) for terms in value_terms]
+>>>>>>> Stashed changes
     if any(matches):
         strength = 1.0 if slot.hard else 0.65
         return strength * (sum(matches) / len(matches)), 0.0
@@ -306,6 +411,7 @@ def _slot_agreement(
     return 0.0, 0.0
 
 
+<<<<<<< Updated upstream
 def _negative_conflict(state: SessionState, product: ProductFeatures) -> float:
     for values in state.negative_preferences.values():
         for value in values:
@@ -317,6 +423,95 @@ def _negative_conflict(state: SessionState, product: ProductFeatures) -> float:
 
 def _negative_conflict_compiled(state: CompiledRankingState, product: ProductFeatures) -> float:
     return float(any(terms.issubset(product.all_terms) for terms in state.negative_terms))
+=======
+def _fragment_agreement(state: SessionState, product: ProductFeatures, prepared: dict | None = None) -> float:
+    """How well this product accounts for the shopper's literal statements.
+
+    Exact phrase presence scores 1.0. Anything else falls back to squared token
+    coverage, so a reworded fragment still earns partial credit while incidental
+    overlap on common words ("imported", "closure") stays near zero. The squaring
+    matters: without it every candidate picks up a similar floor from boilerplate
+    and the feature stops discriminating.
+
+    Deliberately a score, never a filter - Amazon metadata is patchy enough that
+    excluding non-matches would drop the true target whenever one phrase is
+    simply absent from its listing.
+    """
+    fragments = state.verbatim_fragments
+    if not fragments:
+        return 0.0
+    total = 0.0
+    compiled = prepared["fragments"] if prepared is not None else [
+        (_normalize_phrase(fragment), _tokens(fragment)) for fragment in fragments
+    ]
+    for normalized, tokens in compiled:
+        if not normalized:
+            continue
+        if not tokens:
+            continue
+        # Graded rather than binary. An exact phrase hit is worth more, but a
+        # flat 1.0 for it would tie together every product sharing that phrase
+        # (often dozens), losing the ability to order within the tie. Squared
+        # coverage keeps incidental common-word overlap near zero.
+        covered = len(tokens & product.all_terms) / len(tokens)
+        total += covered * covered
+        if normalized in product.normalized_text:
+            total += _EXACT_PHRASE_BONUS
+    # Saturating sum rather than a mean: matching three stated phrases is much
+    # stronger evidence than matching one, but averaging would score 1-of-1
+    # above 3-of-4. Normalizing by a constant keeps the feature bounded while
+    # still rewarding accumulated agreement.
+    return min(total / _FRAGMENT_SATURATION, 1.0)
+
+
+def _negative_conflict(state: SessionState, product: ProductFeatures, prepared: dict | None = None) -> float:
+    negatives = prepared["negatives"] if prepared is not None else [
+        _tokens(value) for values in state.negative_preferences.values() for value in values
+    ]
+    for terms in negatives:
+        if terms and terms.issubset(product.all_terms):
+            return 1.0
+    return 0.0
+
+
+def _prepare_state(state: SessionState) -> dict:
+    return {
+        "tokens": {str(value): _tokens(value) for slot in state.slots.values()
+                   for value in (slot.value if isinstance(slot.value, tuple) else (slot.value,))},
+        "fragments": tuple((_normalize_phrase(value), _tokens(value)) for value in state.verbatim_fragments),
+        "negatives": tuple(_tokens(value) for values in state.negative_preferences.values() for value in values),
+    }
+
+
+_FAMILIES = {
+    "footwear": frozenset("shoe sneaker boot sandal heel loafer slipper footwear moccasin".split()),
+    "bottoms": frozenset("pant short legging trouser jean skirt".split()),
+    "tops": frozenset("shirt blouse tee jacket coat sweater hoodie sweatshirt".split()),
+    "jewelry": frozenset("necklace bracelet earring ring pendant jewelry".split()),
+    "bags": frozenset("bag backpack handbag purse luggage".split()),
+}
+
+
+def _families(terms: frozenset[str]) -> set[str]:
+    return {name for name, vocabulary in _FAMILIES.items() if terms & vocabulary}
+
+
+def _category_agreement(slot: SlotValue | None, product: ProductFeatures) -> tuple[float, float]:
+    if slot is None:
+        return 0.0, 0.0
+    wanted = _tokens(slot.value)
+    requested_family = _families(wanted)
+    # Specific taxonomy is more reliable than incidental nouns in a long title.
+    actual_family = _families(product.specific_category_terms) or _families(product.identity_terms)
+    contradiction = bool(requested_family and actual_family and requested_family.isdisjoint(actual_family))
+    if contradiction:
+        return 0.0, float(slot.strength == ConstraintStrength.HARD)
+    matched = wanted.issubset(product.identity_terms)
+    # A generic request for shoes may legitimately match a sneaker/boot listing.
+    if len(wanted) == 1 and requested_family and requested_family == actual_family:
+        matched = True
+    return (1.0 if slot.strength == ConstraintStrength.HARD else 0.65) * float(matched), 0.0
+>>>>>>> Stashed changes
 
 
 def _price_compatibility(state: SessionState, price: float | None) -> tuple[float, float]:
@@ -390,9 +585,18 @@ def _product_features(product: dict) -> ProductFeatures:
         brand_values=brand_values,
         use_case_values=_phrases_present(normalized_corpus, KNOWN_USE_CASES),
         size_fit_values=tuple(dict.fromkeys(_normalize_phrase(value) for value in FIT_RE.findall(corpus))),
+<<<<<<< Updated upstream
         style_values=_phrases_present(normalized_corpus, KNOWN_STYLES),
         occasion_values=_phrases_present(normalized_corpus, KNOWN_OCCASIONS),
         feature_values=_phrases_present(normalized_corpus, KNOWN_FEATURES),
+=======
+        style_values=_phrases_present(corpus_ngrams, KNOWN_STYLES),
+        occasion_values=_phrases_present(corpus_ngrams, KNOWN_OCCASIONS),
+        feature_values=_phrases_present(corpus_ngrams, KNOWN_FEATURES),
+        normalized_text=normalized_corpus,
+        identity_terms=_tokens(title + " " + " ".join(category_values)),
+        specific_category_terms=_tokens(" ".join(category_values)),
+>>>>>>> Stashed changes
     )
 
 

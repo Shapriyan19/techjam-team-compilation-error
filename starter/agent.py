@@ -28,7 +28,17 @@ from starter.retrieval.config import RetrievalConfig
 from starter.retrieval.dense import DenseRetriever
 from starter.retrieval.facets import FacetRetriever
 from starter.retrieval.rrf import weighted_rrf_details
+<<<<<<< Updated upstream
 from starter.state import SessionState
+=======
+from starter.retrieval.query_expansion import expand_query, expansion_is_useful
+from starter.retrieval.hash_dense import HashDenseIndex
+from starter.runtime_config import PhaseFiveConfig
+from starter.state import SessionState
+from starter.improvements import ImprovementConfig
+from starter.neural import NeuralConfig, PretrainedDenseRetriever, LocalCrossEncoder
+from starter.tracing import FALLBACK_TIERS, RuntimeTracer, TurnTrace
+>>>>>>> Stashed changes
 from starter.understanding import rewrite_query, update_state_from_message
 
 
@@ -69,9 +79,25 @@ class Agent:
         phase4_config: PhaseFourConfig | None = None,
         phase5_config: PhaseFiveConfig | None = None,
         phase6_config: PhaseSixConfig | None = None,
+<<<<<<< Updated upstream
+=======
+        rerank_client: RerankClient | None = None,
+        improvements: ImprovementConfig | None = None,
+        neural_config: NeuralConfig | None = None,
+>>>>>>> Stashed changes
     ) -> None:
         started = time.perf_counter()
         self.catalog_path = Path(catalog_path)
+        self.improvements = improvements or ImprovementConfig.from_environment()
+        self.neural_config = neural_config or NeuralConfig.from_environment()
+        self.local_neural_status = "disabled"
+        self._pretrained_dense = None
+        self._local_cross_encoder = None
+        self._lexical_cache: OrderedDict[tuple, tuple[str, ...]] = OrderedDict()
+        self.lexical_cache_hits = 0
+        self.lexical_cache_misses = 0
+        self._stage_details: dict[str, float] = {}
+        self._hash_dense: HashDenseIndex | None = None
         self.retrieval_config = retrieval_config or RetrievalConfig.from_environment()
         self.phase3_config = phase3_config or PhaseThreeConfig.from_environment()
         self.phase4_config = phase4_config or PhaseFourConfig.from_environment()
@@ -105,8 +131,16 @@ class Agent:
         self.startup_components: dict[str, float] = {}
         component_started = time.perf_counter()
         self._build_index()
+<<<<<<< Updated upstream
         self.startup_components["fts5_catalog_build"] = time.perf_counter() - component_started
         component_started = time.perf_counter()
+=======
+        if self.improvements.hash_dense:
+            rows = self.connection.execute(
+                "SELECT parent_asin, title || ' ' || categories || ' ' || features || ' ' || details || ' ' || store || ' ' || description FROM products"
+            ).fetchall()
+            self._hash_dense = HashDenseIndex([(str(row[0]), str(row[1] or "")) for row in rows])
+>>>>>>> Stashed changes
         self._load_optional_retrievers()
         self.startup_components["retrieval_artifacts"] = time.perf_counter() - component_started
         component_started = time.perf_counter()
@@ -117,8 +151,22 @@ class Agent:
         self.startup_components["clarification"] = time.perf_counter() - component_started
         component_started = time.perf_counter()
         self._load_optional_semantic_reranker()
+<<<<<<< Updated upstream
         self.startup_components["semantic_optional"] = time.perf_counter() - component_started
         self._topk_allocator = ConservativeTopKAllocator(self._feature_store, self.phase5_config)
+=======
+        if self.neural_config.mode != "off":
+            try:
+                if self.neural_config.mode == "dense":
+                    self._pretrained_dense = PretrainedDenseRetriever(self.catalog_path, self.neural_config)
+                else:
+                    if self._feature_store is None:
+                        raise RuntimeError("local reranking needs the feature store")
+                    self._local_cross_encoder = LocalCrossEncoder(self._feature_store, self.neural_config)
+                self.local_neural_status = "ready"
+            except Exception as exc:
+                self.local_neural_status = f"disabled: {type(exc).__name__}: {exc}"
+>>>>>>> Stashed changes
         self.startup_seconds = time.perf_counter() - started
 
     def _build_index(self) -> None:
@@ -207,6 +255,7 @@ class Agent:
             self._feature_scorer = DeterministicFeatureScorer(
                 self._feature_store,
                 self.phase3_config.feature_weights,
+                self.improvements,
             )
             self.feature_scorer_status = "ready"
         except Exception as exc:
@@ -247,15 +296,26 @@ class Agent:
         )
 
     def _lexical_search(self, query: str, top_k: int) -> list[dict]:
+        started = time.perf_counter()
         unique_terms = list(dict.fromkeys(_terms(query)))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
             return []
+<<<<<<< Updated upstream
         cache_key = (expression, int(top_k))
         cached = self._lexical_cache.pop(cache_key, None)
         if cached is not None:
             self._lexical_cache[cache_key] = cached
             self.lexical_cache_hits += 1
+=======
+        key = (expression, top_k)
+        cache_enabled = self.improvements.optimize and self.improvements.lexical_cache_size > 0
+        cached = self._lexical_cache.get(key) if cache_enabled else None
+        if cached is not None:
+            self._lexical_cache.move_to_end(key)
+            self.lexical_cache_hits += 1
+            self._stage_details["lexical"] = _elapsed_ms(started)
+>>>>>>> Stashed changes
             return [{"parent_asin": identifier} for identifier in cached]
         self.lexical_cache_misses += 1
         rows = self.connection.execute(
@@ -263,11 +323,20 @@ class Agent:
             "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
             (expression, top_k),
         ).fetchall()
+<<<<<<< Updated upstream
         identifiers = tuple(str(row[0]) for row in rows)
         self._lexical_cache[cache_key] = identifiers
         if len(self._lexical_cache) > self._lexical_cache_limit:
             self._lexical_cache.popitem(last=False)
         return [{"parent_asin": identifier} for identifier in identifiers]
+=======
+        if cache_enabled:
+            self._lexical_cache[key] = tuple(str(row[0]) for row in rows)
+            if len(self._lexical_cache) > self.improvements.lexical_cache_size:
+                self._lexical_cache.popitem(last=False)
+        self._stage_details["lexical"] = _elapsed_ms(started)
+        return [{"parent_asin": str(row[0])} for row in rows]
+>>>>>>> Stashed changes
 
     def _fresh_retrieval(
         self,
@@ -294,6 +363,12 @@ class Agent:
         rankings: dict[str, list[str]] = {
             "lexical": [item["parent_asin"] for item in lexical],
         }
+        expansion_mode = self.improvements.query_expansion
+        expanded_query = expand_query(query) if expansion_mode != "off" else query
+        if (expanded_query != query and
+                (expansion_mode == "always" or expansion_is_useful(query))):
+            expanded = self._lexical_search(expanded_query, self.retrieval_config.lexical_top_n)
+            rankings["lexical_expanded"] = [item["parent_asin"] for item in expanded]
         if self.retrieval_config.uses_dense:
             if self._dense_retriever is None:
                 return [
@@ -322,6 +397,7 @@ class Agent:
                     for rank, item in enumerate(lexical[:limit], start=1)
                 ]
         if self.retrieval_config.uses_facets and self._facet_retriever is not None:
+            facet_started = time.perf_counter()
             try:
                 with self.trace_recorder.measure(
                     state.session_id, state.turn, "retrieval_facet"
@@ -332,6 +408,7 @@ class Agent:
                     )
             except Exception as exc:
                 self.facet_status = f"disabled: {type(exc).__name__}: {exc}"
+<<<<<<< Updated upstream
         with self.trace_recorder.measure(state.session_id, state.turn, "rrf"):
             fused = weighted_rrf_details(
                 rankings,
@@ -339,6 +416,32 @@ class Agent:
                 k=self.retrieval_config.rrf_k,
                 limit=limit,
             )
+=======
+            finally:
+                self._stage_details["facet"] = _elapsed_ms(facet_started)
+        route_weights = self.retrieval_config.route_weights(state.active_scenario)
+        if self._hash_dense is not None:
+            rankings["hash_dense"] = self._hash_dense.search(query, self.retrieval_config.dense_top_n)
+            route_weights["hash_dense"] = 0.20
+        if "lexical_expanded" in rankings:
+            route_weights["lexical_expanded"] = 0.35
+        if self._pretrained_dense is not None:
+            neural_started = time.perf_counter()
+            try:
+                rankings["pretrained_dense"] = self._pretrained_dense.search(query, self.neural_config.top_n)
+                route_weights["pretrained_dense"] = self.neural_config.dense_weight
+            except Exception as exc:
+                self.local_neural_status = f"fallback: {type(exc).__name__}: {exc}"
+            self._stage_details["pretrained_dense"] = _elapsed_ms(neural_started)
+        fusion_started = time.perf_counter()
+        fused = weighted_rrf_details(
+            rankings,
+            route_weights,
+            k=self.retrieval_config.rrf_k,
+            limit=limit,
+        )
+        self._stage_details["fusion"] = _elapsed_ms(fusion_started)
+>>>>>>> Stashed changes
         return [
             FreshCandidate(
                 parent_asin=item.parent_asin,
@@ -416,8 +519,21 @@ class Agent:
                 {"parent_asin": candidate.parent_asin}
                 for candidate in fresh[:top_k]
             ]
+<<<<<<< Updated upstream
         with self.trace_recorder.measure(state.session_id, state.turn, "reranker"):
             ranked = self._feature_scorer.rank(fresh, state)
+=======
+        rerank_started = time.perf_counter()
+        ranked = self._feature_scorer.rank(fresh, state)
+        self._stage_details["feature_rerank"] = _elapsed_ms(rerank_started)
+        if self._local_cross_encoder is not None:
+            neural_started = time.perf_counter()
+            try:
+                ranked = self._local_cross_encoder.rank(query, ranked)
+            except Exception as exc:
+                self.local_neural_status = f"fallback: {type(exc).__name__}: {exc}"
+            self._stage_details["cross_encoder"] = _elapsed_ms(neural_started)
+>>>>>>> Stashed changes
         state.last_candidate_scores = tuple(
             (candidate.parent_asin, candidate.score)
             for candidate in ranked
@@ -429,9 +545,33 @@ class Agent:
         ]
         return [
             {"parent_asin": candidate.parent_asin}
+<<<<<<< Updated upstream
             for candidate in ranked
             if candidate.parent_asin not in state.rejected_product_ids
         ][:top_k]
+=======
+            for candidate in self._reranked_candidates(query, state)[:top_k]
+        ]
+
+    def route_health(self) -> dict:
+        return {
+            "lexical": "ready",
+            "dense": self.dense_status,
+            "facet": self.facet_status,
+            "reranker": self.feature_scorer_status,
+            "clarification": self.clarification_status,
+            "allocation": self.allocation_status,
+            "semantic_rerank": self.semantic_rerank_status,
+            "local_neural": self.local_neural_status,
+        }
+
+    def last_trace(self) -> dict | None:
+        trace = self.tracer.last
+        return None if trace is None else trace.to_dict()
+
+    def trace_history(self) -> list[dict]:
+        return [trace.to_dict() for trace in self.tracer]
+>>>>>>> Stashed changes
 
     def runtime_stats(self) -> dict:
         return {
@@ -501,6 +641,7 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
+<<<<<<< Updated upstream
         state = self.session_state(session_id)
         with self.trace_recorder.measure(session_id, turn, "state"):
             parsed = update_state_from_message(state, user_message, turn)
@@ -508,6 +649,19 @@ class Agent:
             query = rewrite_query(state)
         state.rejected_product_ids.update(
             explicit_rejected_ids(user_message, state.last_recommendations)
+=======
+        started = time.perf_counter()
+        stage_milliseconds: dict[str, float] = {}
+        self._stage_details = {}
+        degraded: list[str] = []
+        usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        state = self._session_for_response(session_id)
+        parsed, query = self._understand(
+            state, user_message, turn, stage_milliseconds, degraded
+        )
+        recommendations, tier = self._recommend(
+            query, top_k, state, parsed, user_message, stage_milliseconds, degraded, usage
+>>>>>>> Stashed changes
         )
         if self.phase3_config.uses_persistence:
             recommendations = self._persistent_search(
@@ -680,17 +834,253 @@ class Agent:
                 for name, slot in state.slots.items()
             },
         })
+<<<<<<< Updated upstream
         response_started = time.perf_counter()
         response = {
+=======
+        stage_milliseconds["total"] = _elapsed_ms(started)
+        # Detail timings overlap retrieval_ranking; never sum both levels.
+        stage_milliseconds.update(self._stage_details)
+        self._record_trace(
+            state=state,
+            tier=tier,
+            query=query,
+            parsed=parsed,
+            ask_attribute=ask_attribute,
+            decision_reason=decision_reason,
+            recommendation_count=len(recommendations),
+            stage_milliseconds=stage_milliseconds,
+            degraded=degraded,
+        )
+        return {
+>>>>>>> Stashed changes
             "message": message,
             "ask_attribute": ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
+<<<<<<< Updated upstream
         self.trace_recorder.record(
             session_id,
             turn,
             "response_validation",
             (time.perf_counter() - response_started) * 1000.0,
+=======
+
+    def _session_for_response(self, session_id: str) -> SessionState:
+        """Never fail a turn because the harness skipped or lost ``reset``."""
+        try:
+            return self.session_state(session_id)
+        except RuntimeError:
+            self.reset(session_id, {})
+            return self.session_state(session_id)
+
+    def _understand(
+        self,
+        state: SessionState,
+        user_message: str,
+        turn: int,
+        stage_milliseconds: dict[str, float],
+        degraded: list[str],
+    ) -> tuple[object | None, str]:
+        started = time.perf_counter()
+        parsed: object | None = None
+        try:
+            parsed = update_state_from_message(state, user_message, turn,
+                                               active_evidence=self.improvements.active_evidence)
+            query = rewrite_query(state, recent_first=self.improvements.recent_query)
+        except Exception:
+            degraded.append("understanding")
+            query = " ".join(str(user_message).split())[:1000]
+        stage_milliseconds["understanding"] = _elapsed_ms(started)
+        return parsed, query
+
+    def _recommend(
+        self,
+        query: str,
+        top_k: int,
+        state: SessionState,
+        parsed: object | None,
+        user_message: str,
+        stage_milliseconds: dict[str, float],
+        degraded: list[str],
+        usage: dict[str, int],
+    ) -> tuple[list[dict], str]:
+        started = time.perf_counter()
+        effective_top_k = (
+            1 if 0 < self.improvements.precision_turns >= state.turn else top_k
+        )
+        tier = "full"
+        if "understanding" in degraded:
+            tier = "understanding_fallback"
+        recommendations: list[dict] = []
+        try:
+            state.rejected_product_ids.update(
+                explicit_rejected_ids(user_message, state.last_recommendations)
+            )
+            if self.phase3_config.uses_persistence:
+                recommendations = self._persistent_search(
+                    query,
+                    effective_top_k,
+                    state,
+                    is_override=bool(getattr(parsed, "is_override", False)),
+                    user_message=user_message,
+                )
+            elif self.phase3_config.uses_reranker:
+                candidates = self._reranked_candidates(query, state)
+                candidates, tier = self._semantic_rerank(
+                    candidates, state, tier, degraded, usage
+                )
+                recommendations, tier = self._allocate(candidates, effective_top_k, tier, degraded)
+            else:
+                recommendations = self._search(query, effective_top_k, state)
+        except Exception:
+            degraded.append("ranking")
+            recommendations, tier = self._degraded_recommendations(query, effective_top_k, state)
+        recommendations = _unique_recommendations(recommendations, top_k)
+        if not recommendations:
+            recovered = _unique_recommendations(
+                [{"parent_asin": identifier} for identifier in state.last_recommendations],
+                top_k,
+            )
+            if recovered:
+                degraded.append("empty_ranking")
+                recommendations = recovered
+                tier = "previous_recommendations"
+            else:
+                tier = _worst_tier(tier, "empty")
+        stage_milliseconds["retrieval_ranking"] = _elapsed_ms(started)
+        return recommendations, tier
+
+    def _semantic_rerank(
+        self,
+        candidates: list[ScoredCandidate],
+        state: SessionState,
+        tier: str,
+        degraded: list[str],
+        usage: dict[str, int],
+    ) -> tuple[list[ScoredCandidate], str]:
+        if self._semantic_reranker is None or not candidates:
+            return candidates, tier
+        started = time.perf_counter()
+        try:
+            result = self._semantic_reranker.rerank(candidates, state)
+        except Exception as exc:
+            degraded.append("semantic_rerank")
+            state.llm_status_history.append(f"error: {type(exc).__name__}")
+            return candidates, _worst_tier(tier, "semantic_rerank_fallback")
+        state.llm_status_history.append(result.status)
+        state.llm_prompt_tokens += result.prompt_tokens
+        state.llm_completion_tokens += result.completion_tokens
+        usage["prompt_tokens"] += result.prompt_tokens
+        usage["completion_tokens"] += result.completion_tokens
+        self.semantic_rerank_seconds += time.perf_counter() - started
+        if result.status.startswith("fallback:"):
+            degraded.append("semantic_rerank")
+            tier = _worst_tier(tier, "semantic_rerank_fallback")
+        if not result.applied:
+            return candidates, tier
+        by_identifier = {candidate.parent_asin: candidate for candidate in candidates}
+        reordered = [
+            by_identifier[identifier]
+            for identifier in result.ordered
+            if identifier in by_identifier
+        ]
+        return (reordered or candidates), tier
+
+    def _allocate(
+        self,
+        candidates: list[ScoredCandidate],
+        top_k: int,
+        tier: str,
+        degraded: list[str],
+    ) -> tuple[list[dict], str]:
+        ranked = [{"parent_asin": candidate.parent_asin} for candidate in candidates[:top_k]]
+        if self._allocator is None:
+            return ranked, tier
+        try:
+            allocation = self._allocator.allocate(candidates, top_k)
+        except Exception:
+            degraded.append("allocation")
+            return ranked, _worst_tier(tier, "allocation_fallback")
+        return [
+            {"parent_asin": identifier}
+            for identifier in allocation.recommendations
+        ], tier
+
+    def _degraded_recommendations(
+        self,
+        query: str,
+        top_k: int,
+        state: SessionState,
+    ) -> tuple[list[dict], str]:
+        """Walk down the retrieval tiers until one of them returns something."""
+        try:
+            return self._search(query, top_k, state), "retrieval_fused"
+        except Exception:
+            pass
+        try:
+            return self._lexical_search(query, top_k), "retrieval_lexical"
+        except Exception:
+            return [], "empty"
+
+    def _clarify(
+        self,
+        state: SessionState,
+    ) -> tuple[str, str | None, str | None, str, float | None, float | None]:
+        message = "Here are the closest matches I found."
+        internal_ask_attribute = None
+        ask_attribute = None
+        decision_reason = "Phase 4 disabled"
+        question_score = None
+        question_threshold = None
+        if self._question_analyzer is not None:
+            ranked_for_analysis = [
+                ScoredCandidate(
+                    parent_asin=identifier,
+                    score=score,
+                    fresh_rank=rank,
+                    features=(),
+                )
+                for rank, (identifier, score) in enumerate(state.last_candidate_scores, start=1)
+            ]
+            analysis = self._question_analyzer.analyze(ranked_for_analysis, state)
+            analysis_record = {"turn": state.turn, **analysis.to_dict()}
+            state.question_analysis_history.append(analysis_record)
+            raw_best = max(
+                analysis.traces,
+                key=lambda trace: trace.raw_question_score,
+                default=None,
+            )
+            if raw_best is not None and raw_best.already_asked:
+                state.repeated_questions_prevented += 1
+            if raw_best is not None and raw_best.no_preference:
+                state.no_preference_responses_respected += 1
+            allow_confidence_stop = True
+            if self.improvements.evidence_confidence and state.last_recommendations:
+                from starter.ranking.features import _category_agreement, _negative_conflict
+                product = self._feature_store.get(state.last_recommendations[0])
+                if product is not None:
+                    agreement, conflict = _category_agreement(state.slots.get("category"), product)
+                    allow_confidence_stop = not conflict and not _negative_conflict(state, product)
+                    if state.slots.get("category") is not None and not agreement:
+                        allow_confidence_stop = False
+            decision = self._question_policy.decide(analysis, state, allow_confidence_stop=allow_confidence_stop)
+            internal_ask_attribute = decision.ask_attribute
+            ask_attribute = decision.api_attribute
+            decision_reason = decision.reason
+            question_threshold = decision.threshold
+            if internal_ask_attribute is not None:
+                question_score = analysis.trace_for(internal_ask_attribute).final_question_score
+            if decision.message:
+                message = decision.message
+        return (
+            message,
+            internal_ask_attribute,
+            ask_attribute,
+            decision_reason,
+            question_score,
+            question_threshold,
+>>>>>>> Stashed changes
         )
         return response

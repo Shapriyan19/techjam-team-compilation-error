@@ -360,13 +360,63 @@ def parse_message(message: str, turn: int, state: SessionState) -> ParsedMessage
     )
 
 
-def update_state_from_message(state: SessionState, message: str, turn: int) -> ParsedMessage:
+def update_state_from_message(
+    state: SessionState, message: str, turn: int, *, active_evidence: bool = False,
+) -> ParsedMessage:
+    previous_slots = dict(state.slots)
+    state.active_evidence_enabled = active_evidence
     state.observe_message(turn, message)
     if NO_PREFERENCE_RE.search(message):
         state.record_no_preference_for_last_question()
     parsed = parse_message(message, turn, state)
+<<<<<<< Updated upstream
+=======
+    if not is_non_clue_message(message):
+        # Keep the newest message that says something, so a later run of
+        # non-clue replies still has content to fall back on.
+        retained = _clean_free_text(state, message)
+        if retained:
+            state.retained_query_text = retained
+            # Store the discourse-only-cleaned fragment (not negative-preference
+            # filtered) so a negation from a *later* turn still retroactively
+            # strips words from this turn's text at rewrite time. Feeds RETRIEVAL.
+            discourse_only = _strip_discourse(message)
+            if discourse_only.casefold() not in {
+                frag.casefold() for frag in state.accumulated_free_text
+            }:
+                state.accumulated_free_text.append(discourse_only)
+        # Accumulate the literal claims separately; their conjunction feeds
+        # RANKING via fragment_agreement. Kept apart from the retrieval text
+        # above because this one drops negated and single-word fragments.
+        collected = list(state.verbatim_fragments)
+        seen = {value.casefold() for value in collected}
+        for fragment in extract_verbatim_fragments(message):
+            if fragment.casefold() not in seen:
+                seen.add(fragment.casefold())
+                collected.append(fragment)
+                state.fragment_provenance.append({
+                    "original": fragment, "active": fragment, "source_turn": turn,
+                    "updated_turn": turn,
+                })
+        state.verbatim_fragments = tuple(collected)
+>>>>>>> Stashed changes
     patches = list(parsed.patches)
     state.apply_patches(patches)
+    if active_evidence:
+        invalid = {value for values in state.negative_preferences.values() for value in values}
+        for name, old in previous_slots.items():
+            # A parser can broaden 'earrings' to 'jewelry' on an elaboration.
+            # That is not a user rejection. Only explicit overrides invalidate
+            # replaced slots; explicit negatives are handled above regardless.
+            if not parsed.is_override:
+                continue
+            current = state.slots.get(name)
+            old_values = old.value if isinstance(old.value, tuple) else (old.value,)
+            new_values = () if current is None else (
+                current.value if isinstance(current.value, tuple) else (current.value,)
+            )
+            invalid.update(str(value) for value in old_values if value not in new_values)
+        _invalidate_fragments(state, invalid, turn)
     if parsed.detected_scenario:
         state.active_scenario = parsed.detected_scenario
     if parsed.is_rejection:
@@ -376,7 +426,7 @@ def update_state_from_message(state: SessionState, message: str, turn: int) -> P
     return parsed
 
 
-def rewrite_query(state: SessionState) -> str:
+def rewrite_query(state: SessionState, *, recent_first: bool = False) -> str:
     fragments: list[str] = []
     for slot_name in (
         "category", "product_type", "use_case", "occasion", "brand", "color",
@@ -397,6 +447,7 @@ def rewrite_query(state: SessionState) -> str:
     if maximum is not None:
         fragments.append(f"under {_format_number(maximum.value)}")
 
+<<<<<<< Updated upstream
     latest = state.latest_message
     is_non_clue = bool(REJECTION_RE.search(latest) or NO_PREFERENCE_RE.search(latest))
     if latest and not is_non_clue:
@@ -408,6 +459,18 @@ def rewrite_query(state: SessionState) -> str:
         fallback = " ".join(fallback.split()).strip(" ,.;:-")
         if fallback:
             fragments.append(fallback)
+=======
+    # Accumulated across the whole session (not just the latest message), so a
+    # descriptive phrase from an earlier turn that never resolved to a slot
+    # isn't lost the moment a later, shorter reply becomes the newest message.
+    # Negative preferences are stripped here (not at accumulation time) so a
+    # negation from a later turn still retroactively cleans earlier fragments.
+    fragments.extend(
+        cleaned
+        for fragment in (reversed(state.accumulated_free_text) if recent_first else state.accumulated_free_text)
+        if (cleaned := _strip_negative_preferences(state, fragment))
+    )
+>>>>>>> Stashed changes
 
     unique: list[str] = []
     seen: set[str] = set()
@@ -421,6 +484,106 @@ def rewrite_query(state: SessionState) -> str:
     return state.rewritten_query
 
 
+<<<<<<< Updated upstream
+=======
+def _invalidate_fragments(state: SessionState, invalid: set[str], turn: int) -> None:
+    """Remove only superseded values, not an entire product description.
+
+    Boundary-aware matching avoids removing 'red' from 'preferred'. Applying
+    edits permanently prevents old evidence reviving when a value is re-added.
+    """
+    patterns = [
+        re.compile(r"(?<!\w)" + re.escape(value).replace(r"\ ", r"[\s-]+") + r"(?!\w)", re.I)
+        for value in sorted(invalid, key=lambda value: (-len(value), value)) if value
+    ]
+    def clean(text):
+        for pattern in patterns:
+            text = pattern.sub(" ", text)
+        return " ".join(text.split()).strip(" ,.;:-")
+    for record in state.fragment_provenance:
+        active = clean(record["active"])
+        if active != record["active"]:
+            record.update(active=active, updated_turn=turn)
+    state.verbatim_fragments = tuple(dict.fromkeys(
+        value for fragment in state.verbatim_fragments if (value := clean(fragment))
+    ))
+    state.accumulated_free_text = list(dict.fromkeys(
+        value for fragment in state.accumulated_free_text if (value := clean(fragment))
+    ))
+    state.retained_query_text = clean(state.retained_query_text)
+
+
+def is_non_clue_message(message: str) -> bool:
+    """True for replies that carry no search signal, e.g. 'no preference'."""
+    return bool(REJECTION_RE.search(message) or NO_PREFERENCE_RE.search(message))
+
+
+# Lead-ins the shopper's phrasing tends to hang the real content off. Stripped
+# so the fragment is the claim itself, not the sentence that introduces it.
+FRAGMENT_LEAD_IN_RE = re.compile(
+    r"^.*?\b(?:what matters is|key requirement is|requirement is|matters is|"
+    r"looking for|i need|i want)\b\s*:?\s*",
+    re.IGNORECASE,
+)
+MINIMUM_FRAGMENT_TOKENS = 2
+FRAGMENT_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+# A negated phrase must never become positive evidence: scoring "no leather"
+# as a fragment would reward exactly the products the shopper ruled out.
+# "non" is excluded on purpose so "non-slip" survives as a real feature.
+FRAGMENT_NEGATION_RE = re.compile(
+    r"\b(?:no|not|without|avoid|avoiding|exclude|excluding|never|"
+    r"don'?t|doesn'?t|isn'?t|rather not)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_verbatim_fragments(message: str) -> tuple[str, ...]:
+    """Pull the shopper's literal claims out of one message.
+
+    Deliberately not tied to the local simulator's exact sentence template: it
+    strips whatever lead-in is present, then splits on the separators these
+    replies actually use. A private simulator that paraphrases will still yield
+    usable fragments, just less exact ones - which the scorer handles by
+    falling back to partial credit.
+    """
+    if not message or is_non_clue_message(message):
+        return ()
+    body = " ".join(str(message).split())
+    fragments: list[str] = []
+    for piece in re.split(r"[;•|]|(?<=[a-z0-9])\.\s+", body):
+        # Strip the lead-in per piece: a message often opens with a framing
+        # clause and carries the real claim in a later sentence.
+        cleaned = FRAGMENT_LEAD_IN_RE.sub("", piece.strip(), count=1)
+        cleaned = cleaned.strip().strip(" ,.;:-•")
+        if FRAGMENT_NEGATION_RE.search(cleaned):
+            continue
+        if len(FRAGMENT_TOKEN_RE.findall(cleaned)) >= MINIMUM_FRAGMENT_TOKENS:
+            fragments.append(cleaned)
+    return tuple(fragments)
+
+
+def _strip_discourse(text: str) -> str:
+    cleaned = DISCOURSE_RE.sub(" ", text)
+    return " ".join(cleaned.split()).strip(" ,.;:-")
+
+
+def _strip_negative_preferences(state: SessionState, text: str) -> str:
+    cleaned = text
+    for values in state.negative_preferences.values():
+        for value in values:
+            pattern = re.escape(value)
+            if state.active_evidence_enabled:
+                pattern = r"(?<!\w)" + pattern.replace(r"\ ", r"[\s-]+") + r"(?!\w)"
+            cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    return " ".join(cleaned.split()).strip(" ,.;:-")
+
+
+def _clean_free_text(state: SessionState, text: str) -> str:
+    """Strip discourse filler and anything the shopper has explicitly ruled out."""
+    return _strip_negative_preferences(state, _strip_discourse(text))
+
+
+>>>>>>> Stashed changes
 def _singleton_slot_patches(
     slot: str,
     mentions: list[Mention],
