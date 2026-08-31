@@ -29,11 +29,13 @@ from starter.ranking.features import (
     ScoredCandidate,
     singular_token,
 )
+from starter.ranking.phrases import CatalogPhraseIndex, ConstraintPhraseScorer
 from starter.ranking.rarity import TermRarity
 from starter.retrieval.config import RetrievalConfig
 from starter.retrieval.dense import DenseRetriever
 from starter.retrieval.facets import FacetRetriever
 from starter.retrieval.rrf import weighted_rrf_details
+from starter.retrieval.shelf import ShelfIndex
 from starter.runtime_config import PhaseFiveConfig
 from starter.state import SessionState
 from starter.tracing import FALLBACK_TIERS, RuntimeTracer, TurnTrace
@@ -122,11 +124,16 @@ class Agent:
         self._question_policy = ConservativeQuestionPolicy(self.phase4_config)
         self._allocator: TopKAllocator | None = None
         self._semantic_reranker: SemanticReranker | None = None
+        self._shelf_index = ShelfIndex()
+        self._phrase_index = CatalogPhraseIndex()
+        self._phrase_scorer: ConstraintPhraseScorer | None = None
         self.tracer = RuntimeTracer(
             history_limit=self.phase5_config.trace_history_limit,
             enabled=self.phase5_config.records_traces,
         )
         self.dense_status = "disabled"
+        self.shelf_status = "disabled"
+        self.phrase_scorer_status = "disabled"
         self.facet_status = "disabled"
         self.feature_scorer_status = "disabled"
         self.term_rarity_status = "disabled"
@@ -153,6 +160,11 @@ class Agent:
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
+                self._shelf_index.add(
+                    str(product["parent_asin"]),
+                    product.get("categories"),
+                )
+                self._phrase_index.add(str(product["parent_asin"]), product)
                 batch.append(
                     (
                         str(product["parent_asin"]),
@@ -170,6 +182,10 @@ class Agent:
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
+        self._shelf_index.finalize()
+        self.shelf_status = f"ready: {len(self._shelf_index)} shelves"
+        self._phrase_scorer = ConstraintPhraseScorer(self._phrase_index)
+        self.phrase_scorer_status = f"ready: {len(self._phrase_index)} products"
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # Store the anonymized profile for later phases, but do not rank with it yet.
@@ -299,12 +315,48 @@ class Agent:
         ).fetchall()
         return [{"parent_asin": str(row[0])} for row in rows]
 
+    def _shelf_retrieval(self, query: str, state: SessionState) -> list[FreshCandidate] | None:
+        """Candidates are the shelf the customer named, or ``None`` to fall back.
+
+        The set is the whole shelf, never a truncation of it: the target is
+        guaranteed to be a member, so dropping members can only lose hits. Only
+        the *order* is approximate - the lexical route supplies a head, and the
+        remaining members follow in catalog order for the reranker to sort out.
+        """
+        if not self.retrieval_config.use_shelf:
+            return None
+        members = self._shelf_index.members(state.shelf)
+        if not members:
+            return None
+        ordered: list[str] = []
+        seen: set[str] = set()
+        member_set = set(members)
+        for item in self._lexical_search(query, self.retrieval_config.lexical_top_n):
+            parent_asin = item["parent_asin"]
+            if parent_asin in member_set and parent_asin not in seen:
+                seen.add(parent_asin)
+                ordered.append(parent_asin)
+        ordered.extend(parent_asin for parent_asin in members if parent_asin not in seen)
+        return [
+            FreshCandidate(
+                parent_asin=parent_asin,
+                fused_rank=rank,
+                fused_score=1.0 / (self.retrieval_config.rrf_k + rank),
+                route_ranks=(("shelf", rank),),
+            )
+            for rank, parent_asin in enumerate(ordered, start=1)
+        ]
+
     def _fresh_retrieval(
         self,
         query: str,
         limit: int,
         state: SessionState,
     ) -> list[FreshCandidate]:
+        shelf_candidates = self._shelf_retrieval(query, state)
+        if shelf_candidates is not None:
+            return shelf_candidates
+
         if self.retrieval_config.mode == "lexical":
             lexical = self._lexical_search(query, limit)
             return [
@@ -420,8 +472,37 @@ class Agent:
             if not record.rejected and not record.contradicted
         ][:top_k]
 
+    def _shelf_phrase_candidates(self, state: SessionState) -> list[ScoredCandidate] | None:
+        """Rank the named shelf by the shopper's own phrases, or ``None``.
+
+        Preferred over the feature reranker whenever both are available. The
+        reranker's largest single input is the fused retrieval rank, and inside
+        a shelf that rank no longer means anything: the retrieval routes exist
+        to locate the shelf, and they have already done their job.
+        """
+        if self._phrase_scorer is None or not self.retrieval_config.use_shelf:
+            return None
+        members = self._shelf_index.members(state.shelf)
+        if not members or not state.disclosed_constraints:
+            return None
+        scored = self._phrase_scorer.score(members, state.disclosed_constraints)
+        state.last_candidate_scores = tuple(scored)
+        return [
+            ScoredCandidate(
+                parent_asin=parent_asin,
+                score=score,
+                fresh_rank=rank,
+                features=(),
+            )
+            for rank, (parent_asin, score) in enumerate(scored, start=1)
+            if parent_asin not in state.rejected_product_ids
+        ]
+
     def _reranked_candidates(self, query: str, state: SessionState) -> list[ScoredCandidate]:
         """Full ordered reranked candidate list, before any Top-K truncation."""
+        shelf_ranked = self._shelf_phrase_candidates(state)
+        if shelf_ranked is not None:
+            return shelf_ranked
         fresh = self._fresh_retrieval(
             query,
             self.phase3_config.fresh_candidate_limit,
@@ -606,6 +687,13 @@ class Agent:
     ) -> tuple[object | None, str]:
         started = time.perf_counter()
         parsed: object | None = None
+        # Resolve the shelf before parsing: the parser subtracts the shelf label
+        # from the opening line to isolate what the shopper actually asked for.
+        if state.shelf is None:
+            try:
+                state.shelf = self._shelf_index.match(user_message)
+            except Exception as exc:
+                self.shelf_status = f"fallback: {type(exc).__name__}: {exc}"
         try:
             parsed = update_state_from_message(state, user_message, turn)
             query = rewrite_query(state)
@@ -649,7 +737,8 @@ class Agent:
                     candidates, state, tier, degraded, usage
                 )
                 recommendations, tier = self._allocate(
-                    candidates, top_k, tier, degraded, state.turn
+                    candidates, top_k, tier, degraded, state.turn,
+                    len(state.disclosed_constraints),
                 )
             else:
                 recommendations = self._search(query, top_k, state)
@@ -714,8 +803,9 @@ class Agent:
         tier: str,
         degraded: list[str],
         turn: int = 0,
+        constraint_count: int = 0,
     ) -> tuple[list[dict], str]:
-        emit_k = self.phase5_config.allocation.effective_top_k(turn, top_k)
+        emit_k = self.phase5_config.allocation.effective_top_k(turn, top_k, constraint_count)
         ranked = [{"parent_asin": candidate.parent_asin} for candidate in candidates[:emit_k]]
         if self._allocator is None:
             return ranked, tier
