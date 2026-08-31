@@ -10,6 +10,7 @@ from starter.state import SessionState
 
 
 ASKABLE_ATTRIBUTES = (
+    "other",
     "category",
     "product_type",
     "use_case",
@@ -24,6 +25,7 @@ ASKABLE_ATTRIBUTES = (
 )
 
 API_ATTRIBUTES = {
+    "other": "other",
     "category": "category",
     "product_type": "category",
     "use_case": "use_case",
@@ -37,9 +39,35 @@ API_ATTRIBUTES = {
     "feature": "feature",
 }
 
+# Attributes the shopper can never answer, so asking one throws the turn away.
+# The simulator routes each of its constraints to an attribute with a fixed
+# classifier that has no bucket for brand or category, and it appends the price
+# phrase last, past the point where the disclosed set is truncated. Nothing we
+# ask about these three can come back with a value.
+NEVER_ASK_API_ATTRIBUTES = frozenset({"brand", "budget", "category"})
+
+# Priority order for the next question. "other" is first because it is the only
+# ask that is not filtered by the classifier: it returns whatever the shopper
+# has left, regardless of which attribute it belongs to. Asking it repeatedly
+# drains the session's whole disclosure budget in the fewest turns, and the rest
+# of the order only matters once the shopper says "other" has nothing left.
+ASK_PRIORITY_ORDER = (
+    "other",
+    "feature",
+    "material",
+    "color",
+    "style",
+    "size_fit",
+    "use_case",
+)
+
 # One reader per askable attribute keeps the per-candidate lookup free of the
 # per-product mapping that used to be rebuilt for every attribute.
 ATTRIBUTE_READERS = {
+    # "other" is not backed by a catalog field - it is a request for whatever the
+    # shopper has not said yet, so there is nothing to compute information gain
+    # over. It is selected by priority order, not by the analyzer.
+    "other": lambda product: (),
     "category": lambda product: product.category_values,
     "product_type": lambda product: product.product_type_values,
     "use_case": lambda product: product.use_case_values,
@@ -53,6 +81,7 @@ ATTRIBUTE_READERS = {
 }
 
 QUESTION_TEMPLATES = {
+    "other": "Got it. Anything else that matters for this one?",
     "category": "What type of item are you looking for?",
     "product_type": "What specific type of product are you looking for?",
     "use_case": "What will you mainly use it for?",
@@ -135,22 +164,46 @@ class InformationGainAnalyzer:
         traces: list[AttributeQuestionTrace] = []
         for attribute in ASKABLE_ATTRIBUTES:
             traces.append(self._attribute_trace(attribute, products, probabilities, state))
-        selectable = [trace for trace in traces if trace.final_question_score > 0.0]
+        return QuestionAnalysis(
+            candidate_count=len(limited),
+            candidate_uncertainty=uncertainty,
+            top_score_confidence=top_confidence,
+            chosen_best_attribute=self._choose(traces, state),
+            traces=tuple(traces),
+        )
+
+    def _choose(
+        self,
+        traces: Sequence[AttributeQuestionTrace],
+        state: SessionState,
+    ) -> str | None:
+        """Priority order first, information gain only for the tail.
+
+        The shopper's disclosure budget is a fixed, small set of phrases, and
+        "other" returns them regardless of what they are about. So the question
+        that maximises expected information is almost always "other" until the
+        shopper says it is drained - the analyzer's per-attribute entropy is a
+        tie-break among the leftovers, not the primary decision.
+        """
+        available = {
+            trace.attribute: trace
+            for trace in traces
+            if not trace.no_preference
+            and trace.api_attribute not in NEVER_ASK_API_ATTRIBUTES
+        }
+        for attribute in ASK_PRIORITY_ORDER:
+            if attribute in available:
+                return attribute
+        scored = [trace for trace in available.values() if trace.final_question_score > 0.0]
         chosen = max(
-            selectable,
+            scored,
             key=lambda trace: (
                 trace.final_question_score,
                 -ASKABLE_ATTRIBUTES.index(trace.attribute),
             ),
             default=None,
         )
-        return QuestionAnalysis(
-            candidate_count=len(limited),
-            candidate_uncertainty=uncertainty,
-            top_score_confidence=top_confidence,
-            chosen_best_attribute=chosen.attribute if chosen else None,
-            traces=tuple(traces),
-        )
+        return chosen.attribute if chosen else None
 
     def _attribute_trace(
         self,
@@ -234,15 +287,29 @@ class ConservativeQuestionPolicy:
             return QuestionDecision(None, None, None, None, "question behavior disabled")
         if state.turn >= self.config.last_question_turn:
             return QuestionDecision(None, None, None, None, "turn-cost cutoff")
+        attribute = analysis.chosen_best_attribute
+        if attribute is None:
+            return QuestionDecision(None, None, None, None, "no useful unasked attribute")
+        if attribute in ASK_PRIORITY_ORDER:
+            # A priority-order ask is not a bet that has to clear a bar. The
+            # recommendations go out on this same turn either way, so the
+            # question is free, and the shopper still has something to say
+            # until they tell us otherwise. The confidence and information-gain
+            # gates below exist to avoid spending a turn on a weak question;
+            # there is no turn being spent.
+            return QuestionDecision(
+                ask_attribute=attribute,
+                api_attribute=API_ATTRIBUTES[attribute],
+                message=QUESTION_TEMPLATES[attribute],
+                threshold=None,
+                reason="priority-order attribute not yet exhausted",
+            )
         if analysis.candidate_count < 2:
             return QuestionDecision(None, None, None, None, "insufficient candidates")
         if analysis.candidate_uncertainty < self.config.minimum_uncertainty:
             return QuestionDecision(None, None, None, None, "candidate uncertainty too low")
         if analysis.top_score_confidence > self.config.maximum_top_confidence:
             return QuestionDecision(None, None, None, None, "top candidate confidence sufficient")
-        attribute = analysis.chosen_best_attribute
-        if attribute is None:
-            return QuestionDecision(None, None, None, None, "no useful unasked attribute")
         known_count = sum(_already_known(name, state) for name in ASKABLE_ATTRIBUTES)
         if known_count >= self.config.max_known_attributes:
             return QuestionDecision(None, None, None, None, "intent already well specified")
@@ -325,6 +392,9 @@ def _budget_bands(products: Sequence[ProductFeatures | None]) -> list[tuple[str,
 
 def _already_known(attribute: str, state: SessionState) -> bool:
     slot_names = {
+        # "other" is open-ended: it asks for whatever has not been said, so it
+        # is never satisfied by an existing slot.
+        "other": (),
         "category": ("category",),
         "product_type": ("product_type",),
         "use_case": ("use_case",),
@@ -336,7 +406,7 @@ def _already_known(attribute: str, state: SessionState) -> bool:
         "style": ("style",),
         "occasion": ("occasion",),
         "feature": ("features",),
-    }[attribute]
+    }.get(attribute, 0.5)
     return any(name in state.slots or name in state.negative_preferences for name in slot_names)
 
 
@@ -346,18 +416,18 @@ def _intent_relevance(attribute: str, state: SessionState) -> float:
             "category": 1.0, "product_type": 1.0, "use_case": 0.95,
             "budget": 0.45, "brand": 0.05, "color": 0.55, "material": 0.65,
             "size_fit": 0.60, "style": 0.80, "occasion": 0.80, "feature": 0.90,
-        }[attribute]
+        }.get(attribute, 0.5)
     if state.active_scenario == "buying":
         return {
             "category": 0.35, "product_type": 0.55, "use_case": 0.75,
             "budget": 0.75, "brand": 0.15, "color": 0.65, "material": 0.70,
             "size_fit": 0.75, "style": 0.60, "occasion": 0.55, "feature": 0.85,
-        }[attribute]
+        }.get(attribute, 0.5)
     return {
         "category": 0.70, "product_type": 0.75, "use_case": 0.80,
         "budget": 0.60, "brand": 0.10, "color": 0.65, "material": 0.70,
         "size_fit": 0.70, "style": 0.70, "occasion": 0.70, "feature": 0.85,
-    }[attribute]
+    }.get(attribute, 0.5)
 
 
 def _category_relevance(attribute: str, state: SessionState) -> float:
@@ -369,17 +439,17 @@ def _category_relevance(attribute: str, state: SessionState) -> float:
             "size_fit": 1.0, "use_case": 0.95, "feature": 0.90, "material": 0.75,
             "style": 0.70, "brand": 0.25, "color": 0.60, "budget": 0.65,
             "occasion": 0.55, "category": 0.35, "product_type": 0.60,
-        }[attribute]
+        }.get(attribute, 0.5)
     elif any(word in text for word in ("ring", "necklace", "bracelet", "earring", "jewelry", "watch")):
         relevance = {
             "occasion": 1.0, "style": 0.95, "material": 0.90, "color": 0.70,
             "feature": 0.65, "brand": 0.20, "budget": 0.65, "size_fit": 0.40,
             "use_case": 0.35, "category": 0.35, "product_type": 0.55,
-        }[attribute]
+        }.get(attribute, 0.5)
     elif any(word in text for word in ("dress", "shirt", "top", "pant", "jean", "short", "skirt", "jacket", "coat", "sweater", "hoodie", "clothing")):
         relevance = {
             "size_fit": 1.0, "style": 0.90, "material": 0.85, "color": 0.80,
             "occasion": 0.75, "feature": 0.70, "brand": 0.25, "budget": 0.60,
             "use_case": 0.65, "category": 0.35, "product_type": 0.60,
-        }[attribute]
+        }.get(attribute, 0.5)
     return relevance

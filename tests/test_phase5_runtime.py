@@ -524,12 +524,14 @@ class PrecisionTurnAllocationTests(unittest.TestCase):
         self.assertEqual(config.effective_top_k(2, 10), 1)
 
     def test_later_turns_emit_the_full_top_k(self) -> None:
-        config = AllocationConfig(precision_turns=2, precision_top_k=1)
+        # P20 keys the width to the constraint count instead; clearing the width
+        # table isolates the turn-indexed rule this test is about.
+        config = AllocationConfig(emit_widths=(), precision_turns=2, precision_top_k=1)
         self.assertEqual(config.effective_top_k(3, 10), 10)
         self.assertEqual(config.effective_top_k(10, 10), 10)
 
-    def test_disabled_by_default_configuration_value_of_zero(self) -> None:
-        config = AllocationConfig(precision_turns=0)
+    def test_both_narrowing_rules_off_emits_the_full_top_k(self) -> None:
+        config = AllocationConfig(emit_widths=(), precision_turns=0)
         self.assertEqual(config.effective_top_k(1, 10), 10)
 
     def test_never_emits_more_than_the_requested_top_k(self) -> None:
