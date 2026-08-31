@@ -1,12 +1,29 @@
 # TechJam Build Map
 
+> **Stale below this line.** The current runtime is Phase 20 (shelf-restricted candidate
+> generation, `other`-draining clarification, constraint-count emission, rarity-weighted phrase
+> ranking). `docs/EXPERIMENT_LOG.md` is authoritative for the selected configuration and its
+> scores; the phase description and numbers in this file stop at Phase 16.
+
 This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase
 
-**Phase 11 (post-roadmap): verbatim-evidence layer. The selected runtime is `P11-E001`.
-Recommended TechnicalScore `0.700146`, HitRate@10 `0.845000` on the public set - fully
-deterministic, no network or API calls.**
+**Phase 16 (post-roadmap): RRF `k` lowered to remove the multi-route bias in fusion. The selected
+runtime is `P16-E001`. Public TechnicalScore `0.800259` / HitRate@10 `0.940000`; synthetic-1
+`0.749059` / `0.875000`; synthetic-2 `0.757464` / `0.900000` - fully deterministic, no network or
+API calls.**
+
+P15 and P16 addressed the same bias at two layers: a candidate returned by several retrieval routes
+was being rewarded for that fact rather than for how well any route ranked it, which favours
+generic products over the one specific item the shopper wants. P16 is the first change that
+deliberately trades public score (`-0.009`) for synthetic score (`+0.028`); see
+`docs/EXPERIMENT_LOG.md` P16-E001 for the reasoning and the one-variable revert.
+
+**Report both numbers from now on.** The public set is front-loaded (73% of its targets sit in the
+first 1,000 of 50,000 catalog rows) and therefore overstates retrieval quality. The organizers have
+never documented how private targets are distributed, so `data/synthetic_set.jsonl` (uniform,
+disjoint targets, built by `scripts/generate_synthetic_set.py`) is the more conservative estimate.
 
 Phase 8 began as work on the clarification policy and found a defect first. In 28 of 200 sessions
 the rewritten retrieval query became empty and stayed empty; all 28 failed. Repairing that
@@ -171,14 +188,17 @@ New or changed in Phases 5–7:
 
 | Scope | Samples | HR@10 | MRR | MTTC |
 |---|---:|---:|---:|---:|
-| Overall | 200 | 0.845000 | 0.448486 | 3.845000 |
-| Buying | 80 | 0.825000 | 0.416429 | 3.375000 |
-| Browsing | 80 | 0.900000 | 0.495987 | 3.512500 |
-| Intent Override | 30 | 0.766667 | 0.423929 | 5.766667 |
-| Boundary | 10 | 0.800000 | 0.398611 | 4.500000 |
+| Overall | 200 | 0.940000 | 0.555198 | 2.815000 |
+| Buying | 80 | 0.937500 | 0.477460 | 2.425000 |
+| Browsing | 80 | 0.975000 | 0.649940 | 2.887500 |
+| Intent Override | 30 | 0.900000 | 0.768148 | 4.366667 |
+| Boundary | 10 | 0.900000 | 0.413333 | 3.300000 |
 
-- Overall Efficiency: `0.715500`
-- Overall recommended TechnicalScore: `0.700146`
+- Overall Efficiency: `0.818500`
+- Overall recommended TechnicalScore: `0.800259`
+- Synthetic-1 (uniform targets): HR@10 `0.875000`, TechnicalScore `0.749059`
+- Synthetic-2 (unseen replication): HR@10 `0.900000`, TechnicalScore `0.757464`
+- Between-draw noise floor at n=200: `~0.035` HR@10
 - Reported prompt/completion/total tokens: `0 / 0 / 0`
 - Tests: `137 passed, 0 failed`
 

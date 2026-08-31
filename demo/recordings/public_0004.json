@@ -1,0 +1,262 @@
+{
+  "final_slots": {
+    "category": {
+      "value": "tops",
+      "strength": "hard",
+      "source_turn": 1,
+      "confidence": 0.92
+    },
+    "material": {
+      "value": "polyester",
+      "strength": "soft",
+      "source_turn": 3,
+      "confidence": 0.98
+    }
+  },
+  "runtime_stats": {
+    "retrieval_mode": "hybrid_facet",
+    "phase3_mode": "rerank",
+    "phase4_mode": "ask",
+    "phase5_mode": "trace",
+    "phase6_mode": "off",
+    "phase6_provider": "anthropic",
+    "question_candidate_k": 100,
+    "active_pool_size": 1000,
+    "feature_scorer_status": "ready",
+    "clarification_status": "ready",
+    "allocation_status": "disabled",
+    "semantic_rerank_status": "disabled",
+    "llm_model": null,
+    "startup_seconds": 20.382626036000147,
+    "dense_status": "disabled",
+    "facet_status": "ready",
+    "feature_cache": {
+      "cache_size": 5000,
+      "cached_products": 205,
+      "hits": 195,
+      "misses": 205,
+      "unknown_lookups": 0,
+      "hit_rate": 0.4875
+    },
+    "runtime_health": {
+      "traced_turns": 4,
+      "retained_traces": 4,
+      "fallback_tiers": {
+        "full": 4
+      },
+      "degraded_stages": {},
+      "average_stage_milliseconds": {
+        "clarification": 57.3504,
+        "retrieval_ranking": 6.3385,
+        "total": 84.1485,
+        "understanding": 20.4078
+      }
+    },
+    "dense_average_query_ms": null,
+    "facet_average_query_ms": null
+  },
+  "sample_id": "public_0004",
+  "scenario_type": "intent_override",
+  "session_id": "demo_public_0004",
+  "hit": true,
+  "first_hit_turn": 3,
+  "best_rank": 1,
+  "reciprocal_rank": 1.0,
+  "turn_count": 3,
+  "target_parent_asin": "B07C2XPZ6D",
+  "target_title": "Emmalise Women's Basic Casual Long Camisole Adjustable Strap Cami Layering Top",
+  "override_turn": 3,
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "I'm looking for Tops & Tees Tanks & Camis. Long torso camisole for extra coverage with spagetti adjustable strap for perfect fit",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B07C2XPZ6D",
+          "title": "Emmalise Women's Basic Casual Long Camisole Adjustable Strap Cami Layering Top",
+          "price": 10.97,
+          "average_rating": 4.4,
+          "store": "Emmalise",
+          "is_target": true
+        }
+      ],
+      "target_rank": 1,
+      "target_visible_unscored": true,
+      "is_hit_turn": false,
+      "error": null,
+      "rewritten_query": "tops I'm looking for Tops & Tees Tanks & Camis. Long torso camisole for extra coverage with spagetti adjustable strap for perfect fit",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "tops",
+          "source_turn": 1
+        }
+      },
+      "slots_added": [
+        "category"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:category"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 3.012,
+        "retrieval_ranking": 5.7572,
+        "clarification": 104.6456,
+        "total": 113.4844
+      },
+      "route_candidates": {
+        "fused_candidates": 111,
+        "returned": 1
+      },
+      "active_scenario": null
+    },
+    {
+      "turn": 2,
+      "user_message": "For that, what matters is: polyester; Polyester,Cotton,Spandex.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B07C2XPZ6D",
+          "title": "Emmalise Women's Basic Casual Long Camisole Adjustable Strap Cami Layering Top",
+          "price": 10.97,
+          "average_rating": 4.4,
+          "store": "Emmalise",
+          "is_target": true
+        },
+        {
+          "rank": 2,
+          "parent_asin": "B07NWXM3XW",
+          "title": "Paddy Girl | St. Patrick's Day Women's Racerback Tank Top",
+          "price": null,
+          "average_rating": 4.6,
+          "store": "Threadrock",
+          "is_target": false
+        }
+      ],
+      "target_rank": 1,
+      "target_visible_unscored": true,
+      "is_hit_turn": false,
+      "error": null,
+      "rewritten_query": "tops spandex I'm looking for Tops & Tees Tanks & Camis. Long torso camisole for extra coverage with spagetti adjustable strap for perfect fit For that, what matters is: polyester; Polyester,Cotton,Spandex",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "tops",
+          "source_turn": 1
+        },
+        "material": {
+          "value": "spandex",
+          "source_turn": 2
+        }
+      },
+      "slots_added": [
+        "material"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:material"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 2.8371,
+        "retrieval_ranking": 7.4569,
+        "clarification": 4.1746,
+        "total": 14.5064
+      },
+      "route_candidates": {
+        "fused_candidates": 111,
+        "returned": 2
+      },
+      "active_scenario": null
+    },
+    {
+      "turn": 3,
+      "user_message": "Actually, ignore my earlier preference. What I need is: polyester.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B07C2XPZ6D",
+          "title": "Emmalise Women's Basic Casual Long Camisole Adjustable Strap Cami Layering Top",
+          "price": 10.97,
+          "average_rating": 4.4,
+          "store": "Emmalise",
+          "is_target": true
+        },
+        {
+          "rank": 2,
+          "parent_asin": "B07NWXM3XW",
+          "title": "Paddy Girl | St. Patrick's Day Women's Racerback Tank Top",
+          "price": null,
+          "average_rating": 4.6,
+          "store": "Threadrock",
+          "is_target": false
+        }
+      ],
+      "target_rank": 1,
+      "target_visible_unscored": false,
+      "is_hit_turn": true,
+      "error": null,
+      "rewritten_query": "tops polyester I'm looking for Tops & Tees Tanks & Camis. Long torso camisole for extra coverage with spagetti adjustable strap for perfect fit For that, what matters is: polyester; Polyester,Cotton What I need is: polyester",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "tops",
+          "source_turn": 1
+        },
+        "material": {
+          "value": "polyester",
+          "source_turn": 2
+        }
+      },
+      "slots_added": [],
+      "slots_removed": [],
+      "slots_changed": [
+        "material"
+      ],
+      "state_patches": [
+        "REMOVE:material",
+        "SET:material"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 2.5332,
+        "retrieval_ranking": 6.6124,
+        "clarification": 2.2299,
+        "total": 11.4138
+      },
+      "route_candidates": {
+        "fused_candidates": 111,
+        "returned": 2
+      },
+      "active_scenario": "intent_override"
+    }
+  ]
+}

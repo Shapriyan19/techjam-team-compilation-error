@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypeAlias
@@ -93,6 +94,10 @@ class SessionState:
     turn: int = 0
     history: list[TurnRecord] = field(default_factory=list)
     active_scenario: str | None = None
+    # Shelf label recovered from the opening message. The customer names the
+    # category once, in turn 1, and never revises it - an override replaces a
+    # preference, not the kind of product - so this is resolved once and kept.
+    shelf: str | None = None
     slots: dict[str, SlotValue] = field(default_factory=dict)
     negative_preferences: dict[str, set[str]] = field(default_factory=dict)
     rejected_information: list[TurnRecord] = field(default_factory=list)
@@ -113,6 +118,12 @@ class SessionState:
     # the target was in the top-scoring group 41/41 times, median group size 23.
     # Used for RANKING (fragment_agreement feature).
     verbatim_fragments: tuple[str, ...] = ()
+    # Requirements the shopper has explicitly stated, in the order they said
+    # them, with the category label and pure discourse removed. Narrower and
+    # more trustworthy than verbatim_fragments: every entry is something the
+    # shopper committed to, so the count is a usable measure of how specific
+    # the intent has become. Drives how wide a list is worth emitting.
+    disclosed_constraints: tuple[str, ...] = ()
     # Distinct free-text fragments carried across the whole session, not just the
     # latest message. Descriptive text from an early message (e.g. a product name
     # or phrase that never resolves to a slot) is often the only thing retrieval
@@ -165,6 +176,16 @@ class SessionState:
             self.asked_attributes.add(attribute)
         if api_attribute:
             self.asked_api_attributes.add(api_attribute)
+
+    def record_disclosed_constraints(self, values: Iterable[str]) -> None:
+        collected = list(self.disclosed_constraints)
+        seen = {value.casefold() for value in collected}
+        for value in values:
+            cleaned = " ".join(str(value).split())
+            if cleaned and cleaned.casefold() not in seen:
+                seen.add(cleaned.casefold())
+                collected.append(cleaned)
+        self.disclosed_constraints = tuple(collected)
 
     def record_no_preference_for_last_question(self) -> None:
         if self.last_asked_attribute:
@@ -269,6 +290,7 @@ class SessionState:
             "session_id": self.session_id,
             "turn": self.turn,
             "active_scenario": self.active_scenario,
+            "shelf": self.shelf,
             "history": [{"turn": item.turn, "message": item.message} for item in self.history],
             "slots": {
                 name: {

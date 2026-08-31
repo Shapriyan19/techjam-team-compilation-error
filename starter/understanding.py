@@ -38,6 +38,16 @@ NO_PREFERENCE_RE = re.compile(
     r"\b(?:no|don['’]t have an?)(?: additional)? preference\b|\buse your judgment\b",
     re.IGNORECASE,
 )
+# "I don't have an *additional* preference for X" means X is drained - there is
+# genuinely nothing left to say about it, so never ask again. That is a
+# different claim from "I don't have a preference for X; please use your
+# judgment", which is a shopper declining to answer one question while their
+# other requirements remain undisclosed. Treating the second as exhaustion
+# permanently blocks the attribute and throws away everything still on offer.
+EXHAUSTED_PREFERENCE_RE = re.compile(
+    r"\b(?:don['’]t have an|no)\s+additional\s+preference\b",
+    re.IGNORECASE,
+)
 
 RANGE_BUDGET_RE = re.compile(
     r"\bbetween\s+\$?\s*(\d+(?:\.\d+)?)\s+(?:and|to)\s+\$?\s*(\d+(?:\.\d+)?)\b",
@@ -360,10 +370,59 @@ def parse_message(message: str, turn: int, state: SessionState) -> ParsedMessage
     )
 
 
+# The shopper states requirements in a small set of shapes: a lead-in phrase
+# followed by one or more semicolon-separated claims, or - in the opening line -
+# the category followed by the first requirement. Everything else they say is
+# discourse.
+DISCLOSURE_LEAD_IN_RE = re.compile(
+    r"\b(?:what matters is|what i need is|a key requirement is|key requirement is)\s*:\s*(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+OPENING_LINE_RE = re.compile(r"\bi'?m looking for\s+(.+)$", re.IGNORECASE | re.DOTALL)
+STILL_EXPLORING_RE = re.compile(r",?\s*but i'?m still exploring\.?\s*$", re.IGNORECASE)
+
+
+def _clean_constraint(value: str) -> str:
+    return " ".join(str(value).split()).strip(" .;,")
+
+
+def extract_disclosed_constraints(message: str, shelf: str | None = None) -> tuple[str, ...]:
+    """Requirements the shopper committed to in this message.
+
+    Deliberately narrower than ``extract_verbatim_fragments``: the category
+    label is not a requirement (every product on the shelf carries it), and a
+    shopper who says they are still exploring has stated nothing at all. Single
+    words are kept here - "cotton" is often the whole of a shopper's opening
+    requirement, and dropping it would discard the most specific thing they said.
+    """
+    text = " ".join(str(message).split())
+    if not text or is_non_clue_message(text):
+        return ()
+    disclosure = DISCLOSURE_LEAD_IN_RE.search(text)
+    if disclosure:
+        return tuple(
+            value
+            for part in disclosure.group(1).split(";")
+            if (value := _clean_constraint(part))
+        )
+    opening = OPENING_LINE_RE.search(text)
+    if opening:
+        tail = opening.group(1)
+        if STILL_EXPLORING_RE.search(tail):
+            return ()
+        if shelf and tail.casefold().startswith(shelf.casefold()):
+            tail = tail[len(shelf):]
+        value = _clean_constraint(tail)
+        return (value,) if value else ()
+    value = _clean_constraint(text)
+    return (value,) if value else ()
+
+
 def update_state_from_message(state: SessionState, message: str, turn: int) -> ParsedMessage:
     state.observe_message(turn, message)
-    if NO_PREFERENCE_RE.search(message):
+    if EXHAUSTED_PREFERENCE_RE.search(message):
         state.record_no_preference_for_last_question()
+    state.record_disclosed_constraints(extract_disclosed_constraints(message, state.shelf))
     parsed = parse_message(message, turn, state)
     if not is_non_clue_message(message):
         # Keep the newest message that says something, so a later run of

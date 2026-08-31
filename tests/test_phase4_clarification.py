@@ -219,11 +219,22 @@ class ConservativeQuestionPolicyTest(unittest.TestCase):
         self.assertIsNotNone(decision.message)
 
     def test_low_usefulness_question_is_not_asked(self) -> None:
+        # Scored outside the priority order, where the threshold still governs.
+        # A priority-order attribute deliberately bypasses this gate: it costs
+        # no turn, so there is nothing for a score to justify.
         decision = ConservativeQuestionPolicy(self.config()).decide(
-            _analysis(0.1), self.state(2)
+            _analysis(0.1, "occasion"), self.state(2)
         )
 
         self.assertIsNone(decision.api_attribute)
+
+    def test_priority_order_question_ignores_the_score_threshold(self) -> None:
+        decision = ConservativeQuestionPolicy(self.config()).decide(
+            _analysis(0.0), self.state(2)
+        )
+
+        self.assertEqual(decision.api_attribute, "color")
+        self.assertEqual(decision.reason, "priority-order attribute not yet exhausted")
 
     def test_turn_nine_still_asks(self) -> None:
         # A turn-9 answer still reaches the turn-10 query, so it is worth asking.
@@ -245,7 +256,9 @@ class ConservativeQuestionPolicyTest(unittest.TestCase):
         for name in ("category", "brand", "color", "material"):
             state.slots[name] = SlotValue("known", ConstraintStrength.HARD, 1)
 
-        decision = ConservativeQuestionPolicy(self.config()).decide(_analysis(), state)
+        decision = ConservativeQuestionPolicy(self.config()).decide(
+            _analysis(attribute="occasion"), state
+        )
 
         self.assertIsNone(decision.api_attribute)
         self.assertEqual(decision.reason, "intent already well specified")
@@ -346,7 +359,14 @@ class PhaseFourAgentIntegrationTest(unittest.TestCase):
 
         self.assertIsNotNone(response["ask_attribute"])
         self.assertTrue(response["recommendations"])
-        self.assertEqual(len(response["recommendations"]), 10)
+        # Early turns deliberately emit a short list: P19 narrowed the opening
+        # turns, and P20 keys the width to how many requirements are known. The
+        # width opens unconditionally at emit_full_turn, so assert the full Top-K
+        # there - this still covers "a question and a complete ranking arrive
+        # together".
+        agent.respond("session", "something for running", 3, 10)
+        later = agent.respond("session", "with arch support", 4, 10)
+        self.assertEqual(len(later["recommendations"]), 10)
 
     def test_no_preference_suppresses_repeated_internal_attribute(self) -> None:
         agent = self.agent("ask")

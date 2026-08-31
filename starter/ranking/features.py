@@ -11,6 +11,7 @@ from typing import Mapping
 
 from starter.ranking.config import FeatureWeights
 from starter.ranking.evidence import CandidateEvidence, FreshCandidate
+from starter.ranking.rarity import TermRarity
 from starter.state import ConstraintStrength, SessionState, SlotValue
 
 
@@ -191,9 +192,15 @@ class CatalogFeatureStore:
 
 
 class DeterministicFeatureScorer:
-    def __init__(self, store: CatalogFeatureStore, weights: FeatureWeights) -> None:
+    def __init__(
+        self,
+        store: CatalogFeatureStore,
+        weights: FeatureWeights,
+        rarity: "TermRarity | None" = None,
+    ) -> None:
         self.store = store
         self.weights = weights
+        self.rarity = rarity
         self._weighted_items = _weighted_items(weights)
 
     def rank(
@@ -292,7 +299,7 @@ class DeterministicFeatureScorer:
             "style": style,
             "occasion": occasion,
             "feature_overlap": feature_overlap,
-            "fragment_agreement": _fragment_agreement(state, product),
+            "fragment_agreement": _fragment_agreement(state, product, self.rarity),
             "price": price,
             "persistence": persistence,
             "recency": recency,
@@ -331,13 +338,20 @@ def _slot_agreement(
     matches = [bool(terms and terms.issubset(searchable_terms)) for terms in value_terms]
     if any(matches):
         strength = 1.0 if slot.strength == ConstraintStrength.HARD else 0.65
+        # Rarity-weighting this coverage was measured and reverted: every color and
+        # material slot in the evaluation data holds exactly one value, so the ratio
+        # is always 1/1 and the weighting is inert. See docs/EXPERIMENT_LOG.md P18-E002.
         return strength * (sum(matches) / len(matches)), 0.0
     if slot.strength == ConstraintStrength.HARD and reliable_terms:
         return 0.0, 1.0
     return 0.0, 0.0
 
 
-def _fragment_agreement(state: SessionState, product: ProductFeatures) -> float:
+def _fragment_agreement(
+    state: SessionState,
+    product: ProductFeatures,
+    rarity: TermRarity | None = None,
+) -> float:
     """How well this product accounts for the shopper's literal statements.
 
     Exact phrase presence scores 1.0. Anything else falls back to squared token
@@ -365,7 +379,19 @@ def _fragment_agreement(state: SessionState, product: ProductFeatures) -> float:
         # flat 1.0 for it would tie together every product sharing that phrase
         # (often dozens), losing the ability to order within the tie. Squared
         # coverage keeps incidental common-word overlap near zero.
-        covered = len(tokens & product.all_terms) / len(tokens)
+        matched = tokens & product.all_terms
+        if rarity is None:
+            covered = len(matched) / len(tokens)
+        else:
+            # Rarity-weighted coverage. Counting tokens equally made the feature
+            # tie across a crowded category - every candidate matches "cotton"
+            # and "women". Weighting by IDF means accounting for the one rare
+            # word the shopper used outscores matching several common ones,
+            # which is the distinction the ranker previously could not make.
+            # Same [0, 1] scale as the unweighted ratio, so the saturation
+            # constant and phrase bonus below keep their calibration.
+            denominator = rarity.mass(tokens)
+            covered = rarity.mass(matched) / denominator if denominator > 0 else 0.0
         total += covered * covered
         if normalized in product.normalized_text:
             total += _EXACT_PHRASE_BONUS
@@ -491,11 +517,11 @@ def _normalize_phrase(value: object) -> str:
 
 
 def _tokens(value: object) -> frozenset[str]:
-    return frozenset(_singular(token.casefold()) for token in TOKEN_RE.findall(str(value)))
+    return frozenset(singular_token(token.casefold()) for token in TOKEN_RE.findall(str(value)))
 
 
 @lru_cache(maxsize=131072)
-def _singular(token: str) -> str:
+def singular_token(token: str) -> str:
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"
     if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):

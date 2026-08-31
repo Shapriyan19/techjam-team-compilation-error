@@ -1,0 +1,195 @@
+{
+  "final_slots": {
+    "category": {
+      "value": "pants",
+      "strength": "hard",
+      "source_turn": 1,
+      "confidence": 0.92
+    },
+    "material": {
+      "value": "spandex",
+      "strength": "soft",
+      "source_turn": 2,
+      "confidence": 0.98
+    }
+  },
+  "runtime_stats": {
+    "retrieval_mode": "hybrid_facet",
+    "phase3_mode": "rerank",
+    "phase4_mode": "ask",
+    "phase5_mode": "trace",
+    "phase6_mode": "off",
+    "phase6_provider": "anthropic",
+    "question_candidate_k": 100,
+    "active_pool_size": 1000,
+    "feature_scorer_status": "ready",
+    "clarification_status": "ready",
+    "allocation_status": "disabled",
+    "semantic_rerank_status": "disabled",
+    "llm_model": null,
+    "startup_seconds": 20.382626036000147,
+    "dense_status": "disabled",
+    "facet_status": "ready",
+    "feature_cache": {
+      "cache_size": 5000,
+      "cached_products": 261,
+      "hits": 307,
+      "misses": 261,
+      "unknown_lookups": 0,
+      "hit_rate": 0.540493
+    },
+    "runtime_health": {
+      "traced_turns": 6,
+      "retained_traces": 6,
+      "fallback_tiers": {
+        "full": 6
+      },
+      "degraded_stages": {},
+      "average_stage_milliseconds": {
+        "clarification": 38.5808,
+        "retrieval_ranking": 16.0756,
+        "total": 68.7574,
+        "understanding": 14.0544
+      }
+    },
+    "dense_average_query_ms": null,
+    "facet_average_query_ms": null
+  },
+  "sample_id": "public_0021",
+  "scenario_type": "browsing",
+  "session_id": "demo_public_0021",
+  "hit": true,
+  "first_hit_turn": 2,
+  "best_rank": 1,
+  "reciprocal_rank": 1.0,
+  "turn_count": 2,
+  "target_parent_asin": "B07K4FX4WZ",
+  "target_title": "Amazon Essentials Men's Slim-Fit Stretch Golf Pant",
+  "override_turn": null,
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "I'm looking for Men Pants, but I'm still exploring.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B072MM2CFT",
+          "title": "Climbing Pants Men Hiking Pants Quick Drying Pants Convertible Pants Summer Pants Breathable Pants Zip Off Pants Mountain Pants Army Green",
+          "price": null,
+          "average_rating": 2.9,
+          "store": "MAGCOMSEN",
+          "is_target": false
+        }
+      ],
+      "target_rank": null,
+      "target_visible_unscored": false,
+      "is_hit_turn": false,
+      "error": null,
+      "rewritten_query": "pants I'm looking for Men Pants, but I'm still exploring",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "pants",
+          "source_turn": 1
+        }
+      },
+      "slots_added": [
+        "category"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:category"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 1.569,
+        "retrieval_ranking": 70.3406,
+        "clarification": 1.0975,
+        "total": 73.0622
+      },
+      "route_candidates": {
+        "fused_candidates": 56,
+        "returned": 1
+      },
+      "active_scenario": "browsing"
+    },
+    {
+      "turn": 2,
+      "user_message": "For that, what matters is: polyester; 98% Polyester, 2% Spandex.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B07K4FX4WZ",
+          "title": "Amazon Essentials Men's Slim-Fit Stretch Golf Pant",
+          "price": 23.92,
+          "average_rating": 4.3,
+          "store": "Amazon Essentials",
+          "is_target": true
+        },
+        {
+          "rank": 2,
+          "parent_asin": "B088GVMQK8",
+          "title": "Goodstoworld Teen Boys 3D Jogger Pants Funny Cool Graphic Sweatpants Trousers Pants Drawstring Cuffed Jogging Pants Lightweight Trendy Hipster Casual Track Pants Activewear, Medium",
+          "price": null,
+          "average_rating": 4.3,
+          "store": "Goodstoworld",
+          "is_target": false
+        }
+      ],
+      "target_rank": 1,
+      "target_visible_unscored": false,
+      "is_hit_turn": true,
+      "error": null,
+      "rewritten_query": "pants spandex I'm looking for Men Pants, but I'm still exploring For that, what matters is: polyester; 98% Polyester, 2% Spandex",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "pants",
+          "source_turn": 1
+        },
+        "material": {
+          "value": "spandex",
+          "source_turn": 2
+        }
+      },
+      "slots_added": [
+        "material"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:material"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 1.126,
+        "retrieval_ranking": 0.759,
+        "clarification": 0.9859,
+        "total": 2.8881
+      },
+      "route_candidates": {
+        "fused_candidates": 56,
+        "returned": 2
+      },
+      "active_scenario": "browsing"
+    }
+  ]
+}

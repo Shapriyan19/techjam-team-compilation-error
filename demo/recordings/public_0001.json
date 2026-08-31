@@ -1,0 +1,123 @@
+{
+  "final_slots": {
+    "category": {
+      "value": "necklaces",
+      "strength": "hard",
+      "source_turn": 1,
+      "confidence": 0.92
+    }
+  },
+  "runtime_stats": {
+    "retrieval_mode": "hybrid_facet",
+    "phase3_mode": "rerank",
+    "phase4_mode": "ask",
+    "phase5_mode": "trace",
+    "phase6_mode": "off",
+    "phase6_provider": "anthropic",
+    "question_candidate_k": 100,
+    "active_pool_size": 1000,
+    "feature_scorer_status": "ready",
+    "clarification_status": "ready",
+    "allocation_status": "disabled",
+    "semantic_rerank_status": "disabled",
+    "llm_model": null,
+    "startup_seconds": 20.382626036000147,
+    "dense_status": "disabled",
+    "facet_status": "ready",
+    "feature_cache": {
+      "cache_size": 5000,
+      "cached_products": 100,
+      "hits": 0,
+      "misses": 100,
+      "unknown_lookups": 0,
+      "hit_rate": 0.0
+    },
+    "runtime_health": {
+      "traced_turns": 1,
+      "retained_traces": 1,
+      "fallback_tiers": {
+        "full": 1
+      },
+      "degraded_stages": {},
+      "average_stage_milliseconds": {
+        "clarification": 118.3514,
+        "retrieval_ranking": 5.5273,
+        "total": 197.1893,
+        "understanding": 73.249
+      }
+    },
+    "dense_average_query_ms": null,
+    "facet_average_query_ms": null
+  },
+  "sample_id": "public_0001",
+  "scenario_type": "buying",
+  "session_id": "demo_public_0001",
+  "hit": true,
+  "first_hit_turn": 1,
+  "best_rank": 1,
+  "reciprocal_rank": 1.0,
+  "turn_count": 1,
+  "target_parent_asin": "B09PYB7B6Z",
+  "target_title": "QIAN0813 Celttic Knot Triple Moon Pentagram Pentacle Star Wicca Pendant Necklace Round Pagan Jewelry",
+  "override_turn": null,
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "I'm looking for Jewelry Necklaces. A key requirement is: Material:alloy.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B09PYB7B6Z",
+          "title": "QIAN0813 Celttic Knot Triple Moon Pentagram Pentacle Star Wicca Pendant Necklace Round Pagan Jewelry",
+          "price": 9.99,
+          "average_rating": 4.5,
+          "store": "QIAN0813",
+          "is_target": true
+        }
+      ],
+      "target_rank": 1,
+      "target_visible_unscored": false,
+      "is_hit_turn": true,
+      "error": null,
+      "rewritten_query": "necklaces I'm looking for Jewelry Necklaces. A key requirement is: Material:alloy",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "necklaces",
+          "source_turn": 1
+        }
+      },
+      "slots_added": [
+        "category"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:category"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 73.249,
+        "retrieval_ranking": 5.5273,
+        "clarification": 118.3514,
+        "total": 197.1893
+      },
+      "route_candidates": {
+        "fused_candidates": 329,
+        "returned": 1
+      },
+      "active_scenario": "buying"
+    }
+  ]
+}
