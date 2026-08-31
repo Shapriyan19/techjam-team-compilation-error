@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside the shopping agent</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead__id">
+    <h1>Inside the shopping agent</h1>
+    <p>Ten turns to find one product in fifty thousand.</p>
+  </div>
+  <dl class="scoreboard" id="scoreboard" aria-label="Public evaluator results">
+    <div class="metric"><dt>Hit rate@10</dt><dd class="metric__value">—</dd></div>
+  </dl>
+</header>
+
+<nav class="picker" aria-label="Recorded sessions">
+  <ul class="picker__list" id="sessionList"></ul>
+  <button type="button" class="run" id="runLive">
+    <span class="run__glyph" aria-hidden="true">▶</span>
+    <span class="run__label">Run live</span>
+  </button>
+</nav>
+
+<p class="notice" id="notice" role="status" hidden></p>
+
+<main class="stage" id="stage" hidden>
+
+  <section class="human" aria-labelledby="humanHeading">
+    <h2 class="panelhead panelhead--human" id="humanHeading">Conversation</h2>
+    <ol class="thread" id="thread"></ol>
+  </section>
+
+  <section class="machine" aria-labelledby="machineHeading">
+    <h2 class="panelhead" id="machineHeading">
+      Inside the agent
+      <span class="panelhead__turn" id="turnBadge"></span>
+    </h2>
+
+    <div class="block">
+      <h3 class="label">Query ledger</h3>
+      <ol class="ledger" id="ledger"></ol>
+    </div>
+
+    <div class="block">
+      <h3 class="label">Constraint state</h3>
+      <table class="slots" id="slots"><tbody></tbody></table>
+      <p class="empty" id="slotsEmpty" hidden>Nothing extracted yet.</p>
+    </div>
+
+    <div class="block">
+      <h3 class="label">Clarification</h3>
+      <p class="decision" id="decision"></p>
+    </div>
+
+    <div class="block">
+      <h3 class="label">Runtime</h3>
+      <p class="runtime" id="runtime"></p>
+    </div>
+
+    <div class="block">
+      <h3 class="label">Ranked top 10</h3>
+      <ol class="ranked" id="ranked"></ol>
+    </div>
+  </section>
+
+</main>
+
+<footer class="transport" id="transport" hidden>
+  <button type="button" id="prev" class="tbtn" aria-label="Previous turn">&#8676;</button>
+  <button type="button" id="play" class="tbtn tbtn--play" aria-label="Play the session">▶</button>
+  <button type="button" id="next" class="tbtn" aria-label="Next turn">&#8677;</button>
+  <ol class="dots" id="dots" aria-hidden="true"></ol>
+  <p class="transport__read" id="transportRead"></p>
+  <p class="transport__keys">← → step · space plays</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,256 @@
+{
+  "final_slots": {
+    "category": {
+      "value": "hats",
+      "strength": "hard",
+      "source_turn": 1,
+      "confidence": 0.92
+    },
+    "color": {
+      "value": "black",
+      "strength": "soft",
+      "source_turn": 3,
+      "confidence": 0.98
+    },
+    "material": {
+      "value": "leather",
+      "strength": "soft",
+      "source_turn": 3,
+      "confidence": 0.98
+    }
+  },
+  "runtime_stats": {
+    "retrieval_mode": "hybrid_facet",
+    "phase3_mode": "rerank",
+    "phase4_mode": "ask",
+    "phase5_mode": "trace",
+    "phase6_mode": "off",
+    "phase6_provider": "anthropic",
+    "question_candidate_k": 100,
+    "active_pool_size": 1000,
+    "feature_scorer_status": "ready",
+    "clarification_status": "ready",
+    "allocation_status": "disabled",
+    "semantic_rerank_status": "disabled",
+    "llm_model": null,
+    "startup_seconds": 20.382626036000147,
+    "dense_status": "disabled",
+    "facet_status": "ready",
+    "feature_cache": {
+      "cache_size": 5000,
+      "cached_products": 316,
+      "hits": 527,
+      "misses": 316,
+      "unknown_lookups": 0,
+      "hit_rate": 0.625148
+    },
+    "runtime_health": {
+      "traced_turns": 9,
+      "retained_traces": 9,
+      "fallback_tiers": {
+        "full": 9
+      },
+      "degraded_stages": {},
+      "average_stage_milliseconds": {
+        "clarification": 26.0641,
+        "retrieval_ranking": 17.0813,
+        "total": 52.9155,
+        "understanding": 9.7258
+      }
+    },
+    "dense_average_query_ms": null,
+    "facet_average_query_ms": null
+  },
+  "sample_id": "public_0104",
+  "scenario_type": "boundary",
+  "session_id": "demo_public_0104",
+  "hit": true,
+  "first_hit_turn": 3,
+  "best_rank": 1,
+  "reciprocal_rank": 1.0,
+  "turn_count": 3,
+  "target_parent_asin": "B00QSAICLU",
+  "target_title": "Black 1 Inch Wide Leather Like Headband Solid Hair band for Women and Girls",
+  "override_turn": null,
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "I'm looking for Hats & Caps Headbands, but I'm still exploring.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B00FS70LL8",
+          "title": "GIRLPROPS 1 1/4\" Stretch Beaded Headband, Ab Beads, in Multi/Pastel with Ab Finish",
+          "price": null,
+          "average_rating": 5.0,
+          "store": "GIRLPROPS",
+          "is_target": false
+        }
+      ],
+      "target_rank": null,
+      "target_visible_unscored": false,
+      "is_hit_turn": false,
+      "error": null,
+      "rewritten_query": "hats I'm looking for Hats & Caps Headbands, but I'm still exploring",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "hats",
+          "source_turn": 1
+        }
+      },
+      "slots_added": [
+        "category"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:category"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 1.2366,
+        "retrieval_ranking": 45.5128,
+        "clarification": 1.0187,
+        "total": 47.8237
+      },
+      "route_candidates": {
+        "fused_candidates": 55,
+        "returned": 1
+      },
+      "active_scenario": "browsing"
+    },
+    {
+      "turn": 2,
+      "user_message": "I don't have a preference for other; please use your judgment.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B00FS70LL8",
+          "title": "GIRLPROPS 1 1/4\" Stretch Beaded Headband, Ab Beads, in Multi/Pastel with Ab Finish",
+          "price": null,
+          "average_rating": 5.0,
+          "store": "GIRLPROPS",
+          "is_target": false
+        }
+      ],
+      "target_rank": null,
+      "target_visible_unscored": false,
+      "is_hit_turn": false,
+      "error": null,
+      "rewritten_query": "hats I'm looking for Hats & Caps Headbands, but I'm still exploring",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "hats",
+          "source_turn": 1
+        }
+      },
+      "slots_added": [],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 0.9047,
+        "retrieval_ranking": 10.5987,
+        "clarification": 1.024,
+        "total": 12.5723
+      },
+      "route_candidates": {
+        "fused_candidates": 55,
+        "returned": 1
+      },
+      "active_scenario": "browsing"
+    },
+    {
+      "turn": 3,
+      "user_message": "For that, what matters is: leather; color: black.",
+      "agent_message": "Got it. Anything else that matters for this one?",
+      "api_attribute": "other",
+      "recommendations": [
+        {
+          "rank": 1,
+          "parent_asin": "B00QSAICLU",
+          "title": "Black 1 Inch Wide Leather Like Headband Solid Hair band for Women and Girls",
+          "price": 8.99,
+          "average_rating": 4.3,
+          "store": "Motique Accessories",
+          "is_target": true
+        },
+        {
+          "rank": 2,
+          "parent_asin": "B08WYXBRVB",
+          "title": "Otuuz 4 Pieces American Flag Patriotic Accessories for Women USA Flag Sport Headbands Sweat Bands Non Slip Thin Lightweight Breatheable Head Band, 4 Pairs Leather Earrings for Sports Yoga and More",
+          "price": 12.99,
+          "average_rating": 3.9,
+          "store": "Otuuz",
+          "is_target": false
+        }
+      ],
+      "target_rank": 1,
+      "target_visible_unscored": false,
+      "is_hit_turn": true,
+      "error": null,
+      "rewritten_query": "hats black leather I'm looking for Hats & Caps Headbands, but I'm still exploring For that, what matters is: leather; color: black",
+      "ask_attribute": "other",
+      "question_score": 0.0,
+      "question_threshold": null,
+      "decision_reason": "priority-order attribute not yet exhausted",
+      "slots": {
+        "category": {
+          "value": "hats",
+          "source_turn": 1
+        },
+        "color": {
+          "value": "black",
+          "source_turn": 3
+        },
+        "material": {
+          "value": "leather",
+          "source_turn": 3
+        }
+      },
+      "slots_added": [
+        "color",
+        "material"
+      ],
+      "slots_removed": [],
+      "slots_changed": [],
+      "state_patches": [
+        "SET:color",
+        "SET:material"
+      ],
+      "fallback_tier": "full",
+      "degraded_stages": [],
+      "stage_milliseconds": {
+        "understanding": 1.0642,
+        "retrieval_ranking": 1.1666,
+        "clarification": 1.0494,
+        "total": 3.299
+      },
+      "route_candidates": {
+        "fused_candidates": 55,
+        "returned": 2
+      },
+      "active_scenario": "browsing"
+    }
+  ]
+}

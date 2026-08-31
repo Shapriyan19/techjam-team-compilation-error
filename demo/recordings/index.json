@@ -1,0 +1,45 @@
+{
+  "featured": "public_0004",
+  "sessions": [
+    {
+      "sample_id": "public_0001",
+      "scenario_type": "buying",
+      "hit": true,
+      "first_hit_turn": 1,
+      "best_rank": 1,
+      "turn_count": 1,
+      "override_turn": null,
+      "note": "Hard constraint up front, then three turns of narrowing."
+    },
+    {
+      "sample_id": "public_0004",
+      "scenario_type": "intent_override",
+      "hit": true,
+      "first_hit_turn": 3,
+      "best_rank": 1,
+      "turn_count": 3,
+      "override_turn": 3,
+      "note": "Intent override on turn 3 rewrites the query and converts."
+    },
+    {
+      "sample_id": "public_0021",
+      "scenario_type": "browsing",
+      "hit": true,
+      "first_hit_turn": 2,
+      "best_rank": 1,
+      "turn_count": 2,
+      "override_turn": null,
+      "note": "Vague opener - watch the slot map fill from nothing."
+    },
+    {
+      "sample_id": "public_0104",
+      "scenario_type": "boundary",
+      "hit": true,
+      "first_hit_turn": 3,
+      "best_rank": 1,
+      "turn_count": 3,
+      "override_turn": null,
+      "note": "Customer has no preference, and the agent stops asking."
+    }
+  ]
+}
