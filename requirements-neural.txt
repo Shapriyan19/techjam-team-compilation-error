@@ -1,0 +1,5 @@
+# Optional local neural experiments only. The default offline runtime does not
+# import these packages. Freeze resolved versions alongside experiment results.
+sentence-transformers>=5,<6
+numpy==2.3.5
+onnxruntime>=1.19,<2
