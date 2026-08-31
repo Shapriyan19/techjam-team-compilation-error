@@ -1,5 +1,10 @@
 # TechJam Build Map
 
+> **Stale below this line.** The current runtime is Phase 20 (shelf-restricted candidate
+> generation, `other`-draining clarification, constraint-count emission, rarity-weighted phrase
+> ranking). `docs/EXPERIMENT_LOG.md` is authoritative for the selected configuration and its
+> scores; the phase description and numbers in this file stop at Phase 16.
+
 This document answers: **What are we building, what is done, and what is next?**
 
 ## Current phase

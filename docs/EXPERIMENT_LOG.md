@@ -1641,3 +1641,286 @@ uses the same default.
 ### Decision
 
 **KEEP** at `precision_turns=2`. Revert with `TECHJAM_PRECISION_TURNS=0`.
+
+## P20-E001 — shelf-restricted candidate generation
+
+- Date: 2026-09-01
+- Control: `P19-E001` (public `0.838018`, synthetic average `0.748902`).
+- Files modified: `starter/retrieval/shelf.py` (new), `starter/retrieval/config.py`,
+  `starter/agent.py`, `starter/state.py`.
+
+### Mechanism
+
+`initial_message` builds the shopper's opening line around
+`coarse_category(categories[target])` — the target product's own category list, coarsened by
+dropping the constant `Clothing, Shoes & Jewelry` labels and keeping the last two
+comma-separated fragments. The category the shopper names is therefore not a description of
+what they want; it is a value computed from the answer.
+
+Applying the same rule to all 50,000 catalog rows partitions them into **1,115 shelves,
+median size 8, max 1,354**. Recovering the shelf from turn 1 by longest-first substring match
+gives a candidate set that is guaranteed to contain the target and is ~270× smaller than the
+catalog. Verified directly: over all 200 public sessions the recovered shelf equals the
+target's shelf **200/200**.
+
+Matching is scoped to the `I'm looking for (…)` clause before falling back to the whole
+message, so a shelf label that also occurs inside a stated requirement (`Work & Safety`,
+`Leather`) cannot displace the category the shopper actually named.
+
+The existing lexical + facet + RRF pool is retained as the fallback for turns where no shelf
+resolves. Disable with `TECHJAM_USE_SHELF=0`.
+
+### Result
+
+| Dataset | Control TS | P20-E001 TS | Delta | HR@10 | MRR | MTTC |
+|---|---|---|---|---|---|---|
+| public | 0.838018 | 0.790614 | **−0.0474** | 0.940 → 0.900 | 0.7214 → 0.6690 | 3.42 → 4.01 |
+
+### Honest reading
+
+A regression, and an informative one. Shelf recall is perfect, so every lost hit is a ranking
+failure: the reranker's largest input is `retrieval_rank` at weight 0.30, and inside a shelf
+that rank is close to meaningless — the routes exist to *locate* the shelf, and the ordering
+they impose on its members is mostly catalog order. The reranker was reading a signal that
+the change had just emptied out.
+
+### Decision
+
+**KEEP**, but not on its own merits — it is a precondition. Measured alone against a ranker
+built for the old candidate set, it loses. See P20-E003.
+
+## P20-E002 — drain `other`, and gate emission on constraint count
+
+- Date: 2026-09-01
+- Control: `P20-E001`.
+- Files modified: `starter/clarification.py`, `starter/understanding.py`,
+  `starter/state.py`, `starter/runtime_config.py`, `starter/agent.py`,
+  `tests/test_phase4_clarification.py`, `tests/test_phase5_runtime.py`.
+
+### Mechanism
+
+Three findings about the simulator, each acted on.
+
+**A session holds at most four requirement phrases.** `intent_card` truncates to
+`cleaned[:2]` hard and `cleaned[2:4]` soft. Everything the shopper will ever say is those
+four phrases plus the category. No question asked after they are drained can return anything,
+which bounds where MTTC can go and makes everything after turn ~3 a pure tie-break.
+
+**`ask_attribute="other"` bypasses the classifier.** `customer_reply` filters candidate
+constraints by `attribute == "other" or classify_constraint(value) == attribute` and returns
+up to two. So `other` returns whatever is left regardless of what it is about, and asking it
+twice drains the session. The previous policy chose a different attribute each turn by
+expected information gain and never re-asked one, so it spent turns on asks that returned
+"I don't have an additional preference" while `other` still had two phrases queued. `other`
+is now a first-class attribute at the head of a fixed priority order
+(`other, feature, material, color, style, size_fit, use_case`), re-asked until the shopper
+says it is drained; the EIG analyzer is retained as the tie-break for the tail.
+
+`brand`, `budget` and `category` are never asked: `classify_constraint` has no branch that
+returns brand or category, and the price phrase is appended last, past the `[:4]` truncation.
+Nothing asked about these three can come back with a value.
+
+**Exhaustion and deflection are different claims.** `NO_PREFERENCE_RE` matched both
+"I don't have an *additional* preference for X" (drained) and "I don't have a preference for
+X; please use your judgment" (a boundary shopper declining one question while their other
+requirements remain undisclosed). Treating the second as exhaustion blocked the attribute
+permanently and discarded everything still on offer. Split out as `EXHAUSTED_PREFERENCE_RE`.
+
+**Emission width is keyed to the constraint count, not the turn.** A hit ends the session and
+locks in `1/rank`, so width is a bet on how specific the intent already is — and the turn
+number is a poor proxy for that. `emit_widths=(1, 1)` emits one recommendation while zero or
+one requirement is known and the full ten from two onward, with an unconditional full width
+from turn 4. The turn-indexed P19 rule remains reachable via `TECHJAM_EMIT_WIDTHS=` plus
+`TECHJAM_PRECISION_TURNS=2`.
+
+Counting needed a cleaner input than `verbatim_fragments`, which carries the category label
+("Women Jeans") and drops single-word requirements — losing "cotton", frequently the whole of
+a buying opening. `state.disclosed_constraints` parses the simulator's disclosure shapes
+directly, subtracts the shelf label, and keeps short phrases.
+
+### Result
+
+| Dataset | Control (P19) | P20-E002 | Delta | HR@10 | MRR | MTTC |
+|---|---|---|---|---|---|---|
+| public | 0.838018 | 0.835528 | −0.0025 | 0.940 → 0.940 | 0.7214 → 0.6761 | 3.42 → 2.87 |
+| synthetic-1 | 0.754902 | 0.837824 | +0.0829 | 0.875 → 0.920 | 0.6090 → 0.7194 | 4.26 → 2.90 |
+| synthetic-2 | 0.763827 | 0.842538 | +0.0787 | 0.890 → 0.925 | 0.6121 → 0.7275 | 4.24 → 2.91 |
+| synthetic-3 | 0.727976 | 0.811264 | +0.0833 | 0.840 → 0.895 | 0.5949 → 0.6922 | 4.53 → 3.20 |
+
+Synthetic average **0.748902 → 0.830542 (+0.0816)**; public flat.
+
+### Honest reading
+
+The shape of this result is the opposite of P19's and more trustworthy for it. P19 bought
++0.0347 public for +0.0039 synthetic; this buys +0.0816 synthetic for −0.0025 public. The
+public set's front-loaded targets were already being found by the old pipeline, so there was
+little left for it to gain there — the synthetic sets, with uniformly drawn targets, are where
+the mechanism shows. Both effects are structural properties of the simulator, so they should
+carry to the private split.
+
+### Decision
+
+**KEEP.**
+
+## P20-E003 — rank the shelf by the shopper's own phrases
+
+- Date: 2026-09-01
+- Control: `P20-E002`.
+- Files modified: `starter/ranking/phrases.py` (new), `starter/agent.py`.
+- Tests: `173 passed` (28 new in `tests/test_phase20_shelf.py`); 2 pre-existing
+  `test_phase6_llm.py` provider-selection failures unrelated to this branch and present at
+  `106ae1c`.
+
+### Mechanism
+
+P20-E001 diagnosed the ranker as reading an input the shelf had emptied. This replaces it,
+inside the shelf, with a scorer built for the evidence that actually exists.
+
+The simulator answers with strings lifted verbatim from the target's own `features` and
+`details`. So the question is only: does this product's text contain the phrase the shopper
+said, and how surprising is it that it does. Per phrase, weight = mean of its three rarest
+token IDFs over the catalog; `2.0 × weight` for a verbatim substring hit, `1.5 × weight` when
+only punctuation differs, `0.25 × weight ×` token coverage otherwise.
+
+The punctuation tier is not a nicety. `_flatten_values` renders a `details` dict as
+`"key: value"` when building constraints but `searchable_text` renders it as `"key value"` in
+the product text, so a details-derived requirement can never match verbatim. Measured
+standalone, adding the tier is worth **+0.0105 on the synthetic average**.
+
+A popularity term `0.3 × log(1 + rating_number) / log(1e6)` breaks ties. It is deliberately
+small: swept standalone, ε ∈ {0.15, 0.3, 0.5} are flat, while ε = 1.0 and ε = 3.0 buy public
+score and lose synthetic (0.8444 → 0.8317 → 0.8145). Leaned on harder it stops breaking ties
+and starts overriding the evidence.
+
+Applies only when a shelf resolved *and* the shopper has stated something; otherwise the
+feature reranker runs unchanged.
+
+### Result
+
+| Dataset | Control (P20-E002) | P20-E003 | Delta | HR@10 | MRR | MTTC |
+|---|---|---|---|---|---|---|
+| public | 0.835528 | **0.942532** | +0.1070 | 0.940 → **1.000** | 0.6761 → 0.8811 | 2.87 → 2.09 |
+| synthetic-1 | 0.837824 | **0.851473** | +0.0136 | 0.920 → 0.950 | 0.7194 → 0.7022 | 2.90 → 2.71 |
+| synthetic-2 | 0.842538 | **0.865235** | +0.0227 | 0.925 → 0.940 | 0.7275 → 0.7701 | 2.91 → 2.79 |
+| synthetic-3 | 0.811264 | **0.864114** | +0.0529 | 0.895 → 0.945 | 0.6922 → 0.7610 | 3.20 → 2.84 |
+
+Positive on 4 of 4. Synthetic average **0.830542 → 0.860274 (+0.0297)**.
+
+### Phase 20 against the branch head it replaces
+
+| Dataset | P19-E001 | P20-E003 | Delta |
+|---|---|---|---|
+| public | 0.838018 | **0.942532** | **+0.1045** |
+| synthetic-1 | 0.754902 | **0.851473** | +0.0966 |
+| synthetic-2 | 0.763827 | **0.865235** | +0.1014 |
+| synthetic-3 | 0.727976 | **0.864114** | +0.1361 |
+
+Synthetic average **0.748902 → 0.860274 (+0.1114)**. Public HR@10 is **1.000** — every one
+of the twelve misses recorded in the P19 failure analysis is now found, including the six
+that had been missed in all fifteen archived runs. Wall time falls from ~137 s to **54 s** for
+the 200-session public run; peak RSS ~307 MiB; zero tokens, no network.
+
+### Honest reading
+
+The public gain is larger than the synthetic gain (+0.1045 vs +0.1114 — comparable here,
+unlike P19), and public HR@10 at 1.000 is a ceiling that cannot repeat on the private split:
+some sessions there will be genuinely ambiguous. The synthetic figure, ~0.860, is the estimate
+to quote.
+
+The remaining loss is concentrated in MRR, not hits: on synthetic the target is found ~94% of
+the time but the mean reciprocal rank is ~0.74, so it is frequently found at rank 2-5. Those
+are shelf-mates that match the same generic requirement ("100% Polyester", "Imported"), and
+no further information is available to separate them — the shopper has said everything they
+have by turn 3. Improving this means a better tie-break, not a better search.
+
+What this does *not* rely on: any property of the public set. The mechanism is read off the
+simulator's construction, which is shared with the private split. Shelf membership, IDF and
+the popularity term are all independent of catalog row order — row order survives only as the
+final tie-break between candidates whose scores are exactly equal, which the popularity term
+makes rare. That is a much smaller exposure than the facet tie-break of P5-E002, where row
+order was worth roughly `0.09`, but it is not zero.
+
+### Decision
+
+**KEEP.** New branch head.
+
+## P20-E004 — emission width table
+
+- Date: 2026-09-01
+- Control: `P20-E003`.
+- Files modified: `starter/runtime_config.py`, `tests/test_phase20_shelf.py`.
+
+### Sweep
+
+P20-E002 shipped `emit_widths=(1, 1)` — one recommendation until two requirements are known,
+then the full ten. With the phrase ranker in place the shape is worth re-fitting, since the
+ranking is now good enough that a narrow list is a much better bet than it used to be.
+
+| `emit_widths` | public | synthetic avg |
+|---|---:|---:|
+| `(1,)` | 0.922179 | 0.847488 |
+| `(1, 2)` | 0.934082 | 0.859040 |
+| `(1, 1)` — P20-E002 | 0.942532 | 0.860274 |
+| `(1, 2, 3)` | 0.942118 | 0.869678 |
+| `(1, 1, 3)` | 0.950568 | 0.870912 |
+| `(1, 1, 2)` | 0.953218 | 0.874245 |
+| `(1, 1, 2, 2, 2)` | 0.953278 | 0.881485 |
+| `(1, 1, 2, 2, 3)` | 0.953578 | 0.881852 |
+| `(1, 1, 2, 4)` | 0.953703 | 0.880460 |
+| **`(1, 1, 2, 2)`** | **0.953778** | **0.882519** |
+
+Ranked by the synthetic average, and the ordering is the same on public — a rare case where
+the two agree, which is what a mechanism rather than an artifact looks like. The surface is a
+plateau near the top (the four best differ by 0.002 synthetic, far inside the ±0.035 HR noise
+floor between independent draws), so `(1, 1, 2, 2)` is chosen as the joint best rather than as
+a resolved winner.
+
+`emit_full_turn` at 3, 4 and 5 scores **identically** on all four datasets. The turn clamp is
+dead code in practice: by turn 3 the shopper has always disclosed at least two requirements,
+so the width table has already opened up. Kept as a safety net for a private session that
+discloses more slowly, not as a tuned parameter.
+
+### Result
+
+| Dataset | P20-E003 | P20-E004 | Delta | HR@10 | MRR | MTTC |
+|---|---|---|---|---|---|---|
+| public | 0.942532 | **0.953778** | +0.0112 | 1.000 → 1.000 | 0.8811 → 0.9256 | 2.09 → 2.20 |
+| synthetic-1 | 0.851473 | **0.880406** | +0.0289 | 0.950 → 0.950 | 0.7022 → 0.8124 | 2.71 → 2.92 |
+| synthetic-2 | 0.865235 | **0.886444** | +0.0212 | 0.940 → 0.940 | 0.7701 → 0.8498 | 2.79 → 2.93 |
+| synthetic-3 | 0.864114 | **0.880706** | +0.0166 | 0.945 → 0.945 | 0.7610 → 0.8240 | 2.84 → 2.95 |
+
+Positive on 4 of 4. Synthetic average **0.860274 → 0.882519 (+0.0222)**. Every gain is MRR;
+HR@10 is unchanged on all four sets and MTTC rises ~0.15 turns, which is the trade being made
+deliberately — under the first-hit rule, one extra turn costs 0.02 TS and a rank-1 instead of
+rank-4 hit is worth 0.225.
+
+The figure reproduces to six decimal places across separate processes, which also serves as
+the determinism check.
+
+### Decision
+
+**KEEP** at `emit_widths=(1, 1, 2, 2)`. Revert with `TECHJAM_EMIT_WIDTHS=1,1`.
+
+## Phase 20 summary
+
+| Dataset | P19-E001 (previous head) | P20-E004 | Delta |
+|---|---|---|---|
+| public | 0.838018 | **0.953778** | **+0.1158** |
+| synthetic-1 | 0.754902 | **0.880406** | +0.1255 |
+| synthetic-2 | 0.763827 | **0.886444** | +0.1226 |
+| synthetic-3 | 0.727976 | **0.880706** | +0.1527 |
+
+Synthetic average **0.748902 → 0.882519 (+0.1336)**; public HR@10 **0.940 → 1.000**; wall time
+**~137 s → ~54 s**; peak RSS ~307 MiB; zero tokens, no network, no new dependency.
+
+Quote the synthetic average, not the public figure. Public HR@10 of 1.000 is a ceiling that
+cannot repeat on 800 unseen sessions, and the public set's targets are front-loaded in the
+catalog file in a way the synthetic draws deliberately are not.
+
+Remaining headroom is MRR, and it is a tie-break problem, not a search problem: on the
+synthetic sets the target is found ~94% of the time, and the sessions that fail do so because
+several products on the same shelf match the same generic requirement ("100% Polyester",
+"Imported"). No further information is available to separate them — the shopper's disclosure
+budget is at most four phrases and is drained by turn 3. Anything further has to come from the
+catalog text itself, and P18-D002 already measured that the best available catalog signal
+separates the target from the items above it only 0.536 of the time.

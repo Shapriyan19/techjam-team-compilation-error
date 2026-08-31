@@ -1,5 +1,10 @@
 # Repository Overview
 
+> **Stale below this line.** This inventory stops at Phase 7. Phases 8-20 have since replaced
+> the candidate generator (`starter/retrieval/shelf.py`), the ranking path
+> (`starter/ranking/phrases.py`), and the question policy. `docs/EXPERIMENT_LOG.md` is
+> authoritative for the selected configuration and its scores.
+
 Phase 0 inventory was recorded on 2026-08-28 and revalidated on 2026-08-29 from commit `6c5d3d16b319460631b5e684fb72cae9979820d4`. Phases 1–7 were completed on 2026-08-29 without changing the official evaluator, catalog, labels, or scoring logic. Phase 2 selected lexical + facet retrieval with dense disabled; Phase 3 kept deterministic feature reranking; Phase 4 added the catalog-backed clarification policy; Phase 5 hardened the runtime and made facet tie-breaking reproducible across NumPy builds; Phase 6 added an optional, off-by-default Claude Opus 5 shortlist reranker; Phase 7 tuned two parameters. Persistence, dense retrieval, the Top-K allocator, and the LLM reranker are all implemented and inactive.
 
 This document answers: **What exists in this repository, and where do I find it?**
