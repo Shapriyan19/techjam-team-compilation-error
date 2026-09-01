@@ -36,6 +36,7 @@ from starter.retrieval.facets import FacetRetriever
 from starter.retrieval.rrf import weighted_rrf_details
 from starter.runtime_config import PhaseFiveConfig
 from starter.state import SessionState
+from starter.understanding import CATEGORY_ALIASES
 from starter.tracing import FALLBACK_TIERS, RuntimeTracer, TurnTrace
 from starter.understanding import rewrite_query, update_state_from_message
 
@@ -299,6 +300,44 @@ class Agent:
         ).fetchall()
         return [{"parent_asin": str(row[0])} for row in rows]
 
+    def _category_route_search(self, state: SessionState, top_k: int) -> list[dict]:
+        """Extra RRF route scoped to the shopper's stated category.
+
+        Peer comparison (algorathem/Xandurs repos) found a category-scoped
+        route to be their single largest lever: it shrinks the pool a crowded
+        catalog would otherwise flood with unrelated-but-lexically-matching
+        items. Xandurs implements it as a hard partition (candidates() returns
+        *only* the matched shelf, nothing else). That would violate CLAUDE.md
+        rule 5 (full-catalog search every turn; no persisted narrowing) and
+        depends on literal substring reuse of the shopper's exact wording -
+        the paraphrase risk that project explicitly flags against itself.
+
+        This version keeps the same underlying signal but folds it into RRF as
+        one more route alongside lexical/facet, which already run in full
+        every turn regardless of this route's outcome: a wrong or missing
+        category can only fail to help, never remove a candidate the other
+        routes found. It also matches on the category *slot* (extracted via
+        CATEGORY_ALIASES, already tolerant of paraphrase - "tee shirt" and
+        "t-shirt" both resolve to the same canonical value) rather than
+        substring-matching raw message text. Reuses the existing FTS5 index;
+        no new artifact. See docs/EXPERIMENT_LOG.md P21.
+        """
+        slot = state.slots.get("category")
+        if slot is None:
+            return []
+        value = slot.value[0] if isinstance(slot.value, tuple) else slot.value
+        aliases = CATEGORY_ALIASES.get(str(value), (str(value),))
+        expression = "categories: (" + " OR ".join(f'"{alias}"' for alias in aliases) + ")"
+        try:
+            rows = self.connection.execute(
+                "SELECT parent_asin FROM products WHERE products MATCH ? "
+                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+                (expression, top_k),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [{"parent_asin": str(row[0])} for row in rows]
+
     def _fresh_retrieval(
         self,
         query: str,
@@ -356,6 +395,12 @@ class Agent:
                 )
             except Exception as exc:
                 self.facet_status = f"disabled: {type(exc).__name__}: {exc}"
+        if self.retrieval_config.category_weight > 0.0:
+            category_route = self._category_route_search(
+                state, self.retrieval_config.category_top_n
+            )
+            if category_route:
+                rankings["category"] = [item["parent_asin"] for item in category_route]
         fused = weighted_rrf_details(
             rankings,
             self.retrieval_config.route_weights(state.active_scenario),

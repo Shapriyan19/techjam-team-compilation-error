@@ -40,6 +40,13 @@ class RetrievalConfig:
     # peaks near 0.95 and is flat noise above it, not from the higher public score
     # that larger weights reach through catalog row ordering.
     facet_weight: float = 0.95
+    # Extra route scoped to the shopper's stated category (via CATEGORY_ALIASES,
+    # reusing the existing FTS5 index - no new artifact). Additive alongside
+    # lexical/facet, which still run in full every turn: a category the
+    # shopper never mentioned simply contributes nothing. See P21 in
+    # docs/EXPERIMENT_LOG.md. 0.0 disables the route entirely.
+    category_weight: float = 0.0
+    category_top_n: int = 300
     validate_artifact_checksums: bool = True
     deterministic_facet_ties: bool = True
 
@@ -48,6 +55,8 @@ class RetrievalConfig:
             raise ValueError(f"unsupported retrieval mode: {self.mode}")
         if min(self.lexical_top_n, self.dense_top_n, self.facet_top_n) < 1:
             raise ValueError("route Top-N values must be positive")
+        if self.category_top_n < 1:
+            raise ValueError("category_top_n must be positive")
         if self.rrf_k < 0:
             raise ValueError("rrf_k must be non-negative")
 
@@ -64,6 +73,8 @@ class RetrievalConfig:
             lexical_weight=_environment_float("TECHJAM_LEXICAL_WEIGHT", 1.0),
             dense_weight=_environment_float("TECHJAM_DENSE_WEIGHT", 0.0),
             facet_weight=_environment_float("TECHJAM_FACET_WEIGHT", 0.95),
+            category_weight=_environment_float("TECHJAM_CATEGORY_WEIGHT", 0.0),
+            category_top_n=_environment_int("TECHJAM_CATEGORY_TOP_N", 300),
             validate_artifact_checksums=os.getenv(
                 "TECHJAM_VALIDATE_ARTIFACT_CHECKSUMS", "1"
             ).strip().casefold() not in {"0", "false", "no"},
@@ -89,14 +100,20 @@ class RetrievalConfig:
             weights = {"lexical": self.lexical_weight, "dense": self.dense_weight}
             if self.uses_facets:
                 weights["facet"] = self.facet_weight
+            if self.category_weight > 0.0:
+                weights["category"] = self.category_weight
             return weights
         if active_scenario == "buying":
-            return {"lexical": 1.30, "dense": 0.80, "facet": 0.70}
-        if active_scenario == "browsing":
-            return {"lexical": 0.65, "dense": 1.35, "facet": 0.45}
-        if active_scenario == "intent_override":
-            return {"lexical": 1.00, "dense": 1.20, "facet": 0.60}
-        return {"lexical": 1.00, "dense": 1.00, "facet": self.facet_weight}
+            weights = {"lexical": 1.30, "dense": 0.80, "facet": 0.70}
+        elif active_scenario == "browsing":
+            weights = {"lexical": 0.65, "dense": 1.35, "facet": 0.45}
+        elif active_scenario == "intent_override":
+            weights = {"lexical": 1.00, "dense": 1.20, "facet": 0.60}
+        else:
+            weights = {"lexical": 1.00, "dense": 1.00, "facet": self.facet_weight}
+        if self.category_weight > 0.0:
+            weights["category"] = self.category_weight
+        return weights
 
 
 def _environment_int(name: str, default: int) -> int:

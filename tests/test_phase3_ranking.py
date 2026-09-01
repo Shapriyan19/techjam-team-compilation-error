@@ -15,7 +15,7 @@ from starter.ranking.evidence import (
 )
 from starter.ranking.features import CatalogFeatureStore, DeterministicFeatureScorer
 from starter.retrieval.config import RetrievalConfig
-from starter.state import SessionState
+from starter.state import ConstraintStrength, SessionState, SlotValue
 from starter.understanding import update_state_from_message
 
 
@@ -498,3 +498,51 @@ class _StubProduct:
     def __init__(self, terms: frozenset[str]) -> None:
         self.all_terms = terms
         self.normalized_text = ""
+
+
+class CategoryRouteTests(unittest.TestCase):
+    """P21: additive category-scoped RRF route, opt-in via TECHJAM_CATEGORY_WEIGHT."""
+
+    def test_disabled_by_default(self) -> None:
+        config = RetrievalConfig()
+        self.assertEqual(config.category_weight, 0.0)
+        self.assertNotIn("category", config.route_weights(None))
+
+    def test_route_absent_without_a_category_slot(self) -> None:
+        agent = Agent("data/catalog.jsonl", retrieval_config=RetrievalConfig(category_weight=1.0))
+        try:
+            agent.reset("s", {})
+            state = agent.session_state("s")
+            self.assertEqual(agent._category_route_search(state, 50), [])
+        finally:
+            agent.close()
+
+    def test_route_scopes_to_the_categories_column_only(self) -> None:
+        # A term that appears in a title but never in a category must not
+        # leak into the category-scoped route.
+        agent = Agent("data/catalog.jsonl", retrieval_config=RetrievalConfig(category_weight=1.0))
+        try:
+            agent.reset("s", {})
+            agent.respond("s", "I'm looking for t-shirts, a key requirement is: cotton.", 1, 10)
+            state = agent.session_state("s")
+            self.assertIsNotNone(state.slots.get("category"))
+            results = agent._category_route_search(state, 50)
+            self.assertTrue(results)
+        finally:
+            agent.close()
+
+    def test_missing_artifact_style_failure_degrades_to_empty_route(self) -> None:
+        # An unmapped category value (not in CATEGORY_ALIASES) still runs -
+        # falls back to searching for its own literal text - and must never
+        # raise even if that yields nothing.
+        agent = Agent("data/catalog.jsonl", retrieval_config=RetrievalConfig(category_weight=1.0))
+        try:
+            agent.reset("s", {})
+            state = agent.session_state("s")
+            state.slots["category"] = SlotValue(
+                value="zzz-not-a-real-category", strength=ConstraintStrength.HARD,
+                source_turn=1, confidence=1.0,
+            )
+            self.assertEqual(agent._category_route_search(state, 50), [])
+        finally:
+            agent.close()

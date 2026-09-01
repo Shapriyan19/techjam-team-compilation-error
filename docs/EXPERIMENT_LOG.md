@@ -1641,3 +1641,148 @@ uses the same default.
 ### Decision
 
 **KEEP** at `precision_turns=2`. Revert with `TECHJAM_PRECISION_TURNS=0`.
+
+## P20-E001 — HARD strength for answers to our own ask_attribute question — ROLLBACK
+
+- Date: 2026-08-31
+- Control: `P19-E001`.
+- Origin: corrected diagnosis after the AND-retrieval feasibility check (previous session
+  turn) wrongly reported `verbatim_fragments` as sparse. Direct measurement showed
+  `verbatim_fragments` is non-empty in 0/69 tied sessions (median 3-4 fragments); the actual
+  sparse signal is structured `HARD`-strength slots (11/69 zero, 38/69 only one). Root cause
+  traced to `_singleton_slot_patches`: color/material/brand/style default to `SOFT` and only
+  upgrade on marker words ("must"/"required"/"need to") that the evaluator's canned replies
+  rarely contain - measured directly, every color (11/11) and material (20/20) answer to our
+  own `ask_attribute` question was stored `SOFT`, even though it is a direct confirmation, not
+  an incidental mention. Separately: `product_type` is never `SET` anywhere in the module
+  (dead extraction path); `brand` is likely genuine data sparsity per CLAUDE.md.
+- Files modified: `starter/understanding.py::_singleton_slot_patches` (reverted).
+- Tests: `146 passed, 0 failed` before and after.
+
+### Hypothesis
+
+When `state.last_asked_attribute == slot`, default to `HARD` instead of `SOFT`: the shopper
+is confirming exactly what we asked for, not volunteering it in passing.
+
+### Result: net negative on public, roughly flat on synthetic
+
+| Dataset | P19 TS | With fix | Delta |
+|---|---|---|---|
+| public | 0.838018 | 0.835151 | **-0.0029** |
+| synthetic-1 | 0.754902 | 0.751558 | -0.0033 |
+| synthetic-2 | 0.763827 | 0.766174 | +0.0023 |
+| synthetic-3 | 0.727976 | 0.730490 | +0.0025 |
+
+Synthetic average +0.0005 - within noise, not a signal. Public down, and by more than any
+synthetic set moved up. HR@10 fell on two of four sets (public 0.940 -> 0.935, syn-1
+0.880 -> 0.865) - real hits lost, not just reordering.
+
+### Diagnosis
+
+`_slot_agreement` returns a conflict signal only for `HARD` slots with `reliable_terms`:
+mismatch on a `SOFT` slot costs nothing, mismatch on a `HARD` slot costs the full `conflict`
+weight. Promoting these slots to `HARD` therefore introduces a new failure mode: whenever our
+extracted value doesn't literally overlap the true target's catalog text (aliasing gaps,
+color synonyms, a genuinely differently-worded but correct answer), the fix actively
+penalizes the correct product where it previously stayed neutral.
+
+A targeted check found only 5/200 sessions where the target itself carried a conflict
+penalty (2 of those misses) - too small a sample to confidently attribute the loss to this
+mechanism alone, but consistent with it and the right order of magnitude.
+
+### Decision
+
+**Rollback.** No net positive evidence, and real HR losses on two of four sets. Reverted to
+`P19-E001` exactly (syn-3 TS verified back at 0.727976).
+
+### For a future attempt
+
+The idea has a plausible fix if revisited: grant `HARD` credit for *positive* agreement
+(the coverage term) without also enabling the *conflict* penalty for a mismatch on that slot
+- i.e. treat "answered our question" as raising confidence in a match, not as licensing a
+penalty for a non-match. That decouples the two effects this version conflated. Not
+attempted this session.
+
+Separately, still open and unaddressed: `product_type` has no extraction path at all
+(dead code, not merely sparse) - worth checking whether it is redundant with `category`
+(plausible per CLAUDE.md's note that categories already carries the product type in its
+last 1-3 elements) before deciding whether it's worth wiring up.
+
+## P21-E001 — category-scoped RRF route (soft version of the Xandurs shelf filter)
+
+- Date: 2026-09-01
+- Control: `P19-E001`.
+- Origin: peer comparison against `Xandurs/Tik-Tok-TechJam-2026-Track-4`, whose single
+  largest lever (+0.1046 TS by their own ablation) is a hard partition: `candidates()`
+  returns *only* the products sharing the turn-1-stated category, nothing else is ever
+  searched. That violates CLAUDE.md rule 5 (candidate universe must never close down to a
+  persisted subset; full-catalog search must run every turn) and their matching depends on
+  literal substring reuse of the simulator's exact template text - the paraphrase risk their
+  own README explicitly flags against itself (Section 9).
+- Files modified: `starter/agent.py` (`_category_route_search`, wired into `_fresh_retrieval`),
+  `starter/retrieval/config.py` (`category_weight`, `category_top_n`, `route_weights`),
+  `tests/test_phase3_ranking.py` (4 new tests).
+- Tests: `150 passed, 0 failed`.
+
+### Implementation
+
+Kept the underlying signal - the shopper's stated category - but changed the mechanism from
+a hard partition to one more RRF route, additive alongside lexical/facet which continue to
+run in full every turn regardless of this route's outcome. A category the shopper never
+mentioned, or a category the alias table doesn't recognize, contributes nothing; it can
+never remove a candidate the other routes found. Matches on the `category` **slot**
+(extracted via `CATEGORY_ALIASES`, already tolerant of paraphrase - "tee shirt" and
+"t-shirt" resolve to the same canonical value) rather than substring-matching raw message
+text, avoiding the specific risk flagged above. Reuses the existing FTS5 index via a
+column-scoped query (`categories: ("t-shirts" OR "t-shirt" OR ...)`); no new artifact.
+`category_weight=0.0` (the default) disables it entirely - zero behavior change unless
+opted in via `TECHJAM_CATEGORY_WEIGHT`.
+
+### Result: flat to negative at every weight tested
+
+| weight | top_n | syn-3 TS | syn-2 TS |
+|---|---|---|---|
+| 0 (control) | — | 0.727976 | 0.763827 |
+| 0.1 | 300 | 0.727831 | 0.763514 |
+| 0.2 | 100 | 0.726629 | 0.763825 |
+| 0.5 | 100 | 0.722304 | 0.764446 |
+| 0.5 | 300 | 0.718131 | 0.763107 |
+| 1.0 | 300 | 0.715361 | 0.762002 |
+| 2.0 | 300 | 0.708745 | 0.752738 |
+
+No weight beats control on both sets simultaneously; every weight above ~0.1 is a clear
+loss on synthetic-3, and the smallest tested weight is indistinguishable from noise rather
+than a gain.
+
+### Why the additive version doesn't reproduce their effect
+
+`starter/retrieval/facets.py::FIELD_WEIGHTS` already carries `category: 3.0` - the largest
+single weight in the facet route's own composite score. Our candidates are therefore already
+heavily category-filtered *before* this route runs; P18-D001 measured the `category` feature
+tying at 0.7674 for both the target and the item beating it in essentially every rank-2-10
+session, meaning the top 10 already agrees on category almost universally. Adding a third,
+redundant category-weighted route cannot discriminate a signal every candidate already
+shares - RRF just gives the whole tied group another shot of the same evidence, diluting
+routes that were actually discriminating.
+
+Xandurs' effect size comes from a categorically different operation: **elimination**, not
+reinforcement. Their partition removes every out-of-category candidate the lexical OR-search
+would otherwise surface - the crowding problem P18-D001/P18-D002 diagnosed - rather than
+re-weighting candidates that survive an already category-heavy fusion. An additive RRF route
+cannot replicate subtraction; only a filter can.
+
+### Decision
+
+**Rollback the default; keep the code, opt-in and disabled.** `category_weight` defaults to
+`0.0` - no functional change to the shipped agent. The measured negative result is preserved
+here rather than discarded, and the route is available (`TECHJAM_CATEGORY_WEIGHT`) for a
+future attempt at the harder version.
+
+### If the full effect is wanted
+
+Reproducing their actual gain requires elimination, which means a real hard filter with a
+safety net - e.g. narrow to the category route's own candidate list when it returns enough
+results (say, ≥20) to be trustworthy, otherwise fall back to the unrestricted fused pool -
+rather than an unconditional partition with no escape hatch. That is a materially different
+and riskier change (violates rule 5 as literally stated, even with a fallback) and was not
+attempted here; flagging it as the next real option if the score is worth the risk.
