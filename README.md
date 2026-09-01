@@ -1,3 +1,24 @@
+> ## 📍 Judges: Please start in [`submission/`](submission/)
+>
+> This file is the **organizer's original challenge kit**, kept as-is for reference. It
+> is not our submission and does not describe what we built.
+>
+> Our actual entry — setup, reproduction, scores, method, limitations, and cost
+> disclosure — lives in the [`submission/`](submission/) folder:
+>
+> | File | Contents |
+> |---|---|
+> | [`submission/README.md`](submission/README.md) | **Start here.** One-command setup and reproduction, no install/build step required |
+> | [`submission/REPORT.md`](submission/REPORT.md) | Method, model choice, and limitations |
+> | [`submission/DISCLOSURE.md`](submission/DISCLOSURE.md) | Latency, token usage, and estimated cost |
+> | [`submission/agent.py`](submission/agent.py) | Submitted agent entry point |
+> | [`docs/EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md) | Every evaluated change, including regressions, with keep/rollback decisions |
+>
+> All scoring and reproduction commands should be run against `submission/`, not
+> against the material below.
+
+---
+
 # TechJam Conversational E-Commerce Search Challenge
 
 Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
