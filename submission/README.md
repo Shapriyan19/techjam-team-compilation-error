@@ -124,16 +124,3 @@ when those artifacts are absent — which is what makes the default path standar
 
 The artifacts are still read when present, and the fallback tier still exists. It is insurance,
 not a dependency.
-
-## Frozen commit
-
-| | |
-|---|---|
-| Commit | `6289a16` |
-| Branch | `feature/optmize-query` |
-| Evaluator | unmodified official `evaluator/local_evaluator.py` |
-| Catalog | frozen 50,000-product `Clothing_Shoes_and_Jewelry` set, checksummed in `data/SHA256SUMS` |
-
-Retain the generated `results.json` — including its per-session block — alongside this commit
-hash, per the code-freeze rules. `results.json` is gitignored, so keep a copy outside the
-working tree if you need it after a rebuild.
