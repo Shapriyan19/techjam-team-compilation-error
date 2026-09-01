@@ -14,8 +14,7 @@
 > | [`submission/agent.py`](submission/agent.py) | Submitted agent entry point |
 > | [`docs/EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md) | Every evaluated change, including regressions, with keep/rollback decisions |
 >
-> All scoring and reproduction commands should be run against `submission/`, not
-> against the material below.
+> All scoring and reproduction commands can be run against `submission/
 
 ---
 
